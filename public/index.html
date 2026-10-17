@@ -91,7 +91,11 @@
                         <div class="cp-stat"><div class="label">代理 / 直连</div><div class="value">-</div></div>
                         <div class="cp-stat"><div class="label">拦截 / 无备注</div><div class="value">-</div></div>
                         <div class="cp-stat"><div class="label">今日新增</div><div class="value">-</div></div>
-                        <div class="cp-stat"><div class="label">来源设备</div><div class="value">-</div></div>
+                        <!-- 来源设备卡片可点击：跳转设备检测综合视图（在线状态 / 配置告警 / 检测 / 版本） -->
+                        <div class="cp-stat cp-stat-clickable" id="cpStatDevices" role="button" tabindex="0"
+                             title="点击查看设备在线状态、配置告警与综合检测" aria-label="来源设备，点击进入设备检测综合视图">
+                            <div class="label">来源设备</div><div class="value">-</div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -208,6 +212,14 @@ FINAL,PROXY,dns-failed"></textarea>
                                 <option value="50" selected>50条</option>
                                 <option value="100">100条</option>
                             </select>
+                            <!-- 表头显隐：多选控制各列显示与隐藏，状态持久化到数据库（防抖写入） -->
+                            <div class="dropdown" id="cpColumnDropdown">
+                                <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" id="cpColumnBtn"
+                                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                                        aria-label="配置表格显示列">🧱 列显示</button>
+                                <div class="dropdown-menu dropdown-menu-end p-3 cp-column-menu" id="cpColumnMenu"
+                                     aria-labelledby="cpColumnBtn"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -217,14 +229,15 @@ FINAL,PROXY,dns-failed"></textarea>
                             <caption class="visually-hidden">Surge 规则表，点击整行弹出快速编辑、降维排除与删除</caption>
                             <thead>
                                 <tr>
-                                    <th scope="col">类型</th>
-                                    <th scope="col">匹配值</th>
-                                    <th scope="col">策略</th>
-                                    <th scope="col" class="cp-col-params">参数</th>
-                                    <th scope="col">备注</th>
-                                    <th scope="col" class="cp-col-source">来源</th>
-                                    <th scope="col" class="cp-col-time">最近命中</th>
-                                    <th scope="col">次数</th>
+                                    <th scope="col" data-col="type">类型</th>
+                                    <th scope="col" data-col="value">匹配值</th>
+                                    <th scope="col" data-col="policy">策略</th>
+                                    <th scope="col" class="cp-col-params" data-col="params">参数</th>
+                                    <th scope="col" data-col="comment">备注</th>
+                                    <th scope="col" class="cp-col-source" data-col="source">来源</th>
+                                    <th scope="col" class="cp-col-ip" data-col="ip">来源 IP</th>
+                                    <th scope="col" class="cp-col-time" data-col="time">最近命中</th>
+                                    <th scope="col" data-col="count">次数</th>
                                 </tr>
                             </thead>
                             <tbody id="cpTableBody"></tbody>
@@ -322,7 +335,7 @@ FINAL,PROXY,dns-failed"></textarea>
                             <option value="top">🔝 顶部导航</option>
                             <option value="bottom">📱 底部 TabBar（适合手机单手操作）</option>
                         </select>
-                        <p class="text-muted small mt-1 mb-0">切换为底部 TabBar 后，首页 / 数据 / AI配置 / 设置 / 配置检测 变为 iOS 风格的底部图标导航。</p>
+                        <p class="text-muted small mt-1 mb-0">切换为底部 TabBar 后，首页 / 数据 / AI配置 / 设置 变为 iOS 风格的底部图标导航；设备检测视图经首页「来源设备」卡片进入，不占导航位。</p>
                     </div>
                 </div>
             </section>
@@ -372,19 +385,36 @@ FINAL,PROXY,dns-failed"></textarea>
                 </div>
             </section>
 
-            <!-- 版本与更新看板：组件 × 客户端版本 × 服务端最新 × 通道 × 状态（version-check.js 渲染） -->
-            <section class="card mb-3" aria-labelledby="cpVersionTitle">
-                <div class="card-header">
-                    <h2 class="h5 mb-0" id="cpVersionTitle">🧭 版本与更新</h2>
-                </div>
+            <!-- 提示：版本与更新、配置检测已并入「设备检测」综合视图（首页来源设备卡片点击进入） -->
+            <section class="card mb-3" aria-labelledby="cpDeviceEntryTitle">
                 <div class="card-body">
-                    <div id="cpVersionBoard">正在加载版本信息…</div>
+                    <p class="small text-muted mb-0">
+                        🧭 版本与更新、🩺 配置检测已整合到 <b>📱 设备检测</b> 综合视图：
+                        点击首页实时统计里的「来源设备」卡片进入，可同时查看多设备在线状态与配置告警。
+                    </p>
                 </div>
             </section>
         </section>
 
-        <!-- ============================================= 配置检测：部署健康检查 -->
-        <section id="cpPage-health" hidden>
+        <!-- ============================================= 设备检测：来源设备综合详情视图 -->
+        <!-- 由首页「来源设备」统计卡点击进入，聚合：多设备在线状态与配置告警、原配置检测、原版本与更新 -->
+        <section id="cpPage-devices" hidden>
+            <!-- 多设备状态监控：在线统计（n/m）、分级告警与设备清单（devices.js 渲染） -->
+            <section class="card mb-3" aria-labelledby="cpDevicePanelTitle">
+                <div class="card-header">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h5 mb-0" id="cpDevicePanelTitle">📱 来源设备状态</h2>
+                        <span class="small text-muted" id="cpDeviceSummary">正在加载设备状态…</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- 醒目告警条：任一设备存在配置过期 / 校验失败 / 离线时展示，按严重程度着色 -->
+                    <div id="cpDeviceAlerts" class="mb-3"></div>
+                    <div id="cpDeviceList" class="cp-device-list"></div>
+                </div>
+            </section>
+
+            <!-- 配置检测（原独立导航页整体并入）：部署健康检查 -->
             <section class="card mb-3" aria-labelledby="cpHealthTitle">
                 <div class="card-header">
                     <h2 class="h5 mb-0" id="cpHealthTitle">🩺 配置检测</h2>
@@ -405,8 +435,18 @@ FINAL,PROXY,dns-failed"></textarea>
                     </div>
                     <div class="alert alert-secondary py-2 px-3 small d-none mb-3" id="cpHealthSummary" role="status"></div>
                     <div class="list-group" id="cpHealthList">
-                        <div class="list-group-item text-muted small">打开本页即自动执行基础检测。</div>
+                        <div class="list-group-item text-muted small">进入设备检测视图即自动执行基础检测。</div>
                     </div>
+                </div>
+            </section>
+
+            <!-- 版本与更新看板（原设置页卡片整体并入）：组件 × 客户端版本 × 服务端最新 × 通道 × 状态 -->
+            <section class="card mb-3" aria-labelledby="cpVersionTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpVersionTitle">🧭 版本与更新</h2>
+                </div>
+                <div class="card-body">
+                    <div id="cpVersionBoard">正在加载版本信息…</div>
                 </div>
             </section>
         </section>
@@ -643,8 +683,8 @@ FINAL,PROXY,dns-failed"></textarea>
     <!-- 面板脚本以 ES Module 方式加载：main.js 入口，prefs-store 等模块按依赖自动引入。
          ?v= 版本参数由 scripts/inject-version.mjs 随发版更新：入口带参数即让整张模块图
          一起失效（发版即失效），浏览器对同参数请求命中缓存 -->
-    <script type="module" src="js/main.js?v=1.1.1"></script>
+    <script type="module" src="js/main.js?v=1.2.0"></script>
     <!-- PWA 逻辑独立成模块：面板脚本即使初始化失败，SW 注册与安装入口也不受影响 -->
-    <script type="module" src="js/pwa.js?v=1.1.1"></script>
+    <script type="module" src="js/pwa.js?v=1.2.0"></script>
 </body>
 </html>

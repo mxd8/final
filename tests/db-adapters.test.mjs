@@ -297,6 +297,9 @@ console.log('\n[ensureSchema] 版本表迁移机制');
     .includes('surge_logs'));
   const tables = fresh.db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all().map((row) => row.name);
   check('全新库包含健康探针 / 心跳 / 版本表', ['health_probe', 'client_heartbeats', 'db_meta'].every((t) => tables.includes(t)));
+  check('全新库包含设备注册表（v2）', tables.includes('devices'));
+  const logColumns = fresh.db.prepare(`PRAGMA table_info(surge_logs)`).all().map((row) => row.name);
+  check('全新库 surge_logs 含来源 IP 与用户名列（v2）', logColumns.includes('ip') && logColumns.includes('username'));
   await ensureSchema(fresh);
   check('重复执行幂等（_schemaReady 短路）', true);
 
@@ -318,6 +321,9 @@ console.log('\n[ensureSchema] 版本表迁移机制');
   check('历史库补齐 first_time 列', legacy.db.prepare(`SELECT first_time FROM surge_logs LIMIT 1`) !== null);
   const legacyTables = legacy.db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all().map((row) => row.name);
   check('历史库补建新表', ['health_probe', 'client_heartbeats', 'db_meta'].every((t) => legacyTables.includes(t)));
+  check('历史库补建设备表（v2）', legacyTables.includes('devices'));
+  const legacyLogColumns = legacy.db.prepare(`PRAGMA table_info(surge_logs)`).all().map((row) => row.name);
+  check('历史库补齐 ip / username 列（v2）', legacyLogColumns.includes('ip') && legacyLogColumns.includes('username'));
   const legacyVersion = legacy.db.prepare(`SELECT value FROM db_meta WHERE key = 'schema_version'`).get();
   check('历史库写入当前版本号', Number(legacyVersion.value) === DB_SCHEMA_VERSION);
 

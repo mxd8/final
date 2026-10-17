@@ -9,15 +9,18 @@
  *
  * 配置按优先级读取：
  *   1. Surge 持久化键 final_db_config——FINAL 模块的面板在刷新时
- *      写入的 JSON（dbUrl / dbToken / policy），在模块参数表里填一次即可；
+ *      写入的 JSON（dbUrl / dbToken / policy / username / clientId），在模块参数表里填一次即可；
  *   2. [Script] 行 argument=（竖线分隔、按位可留空，兼容旧式空格分隔），编辑器调试兜底。
  * 字段含义：
  *   dbUrl 填网页面板地址或 /api/logger 接口地址均可（自动补全 /api/logger，
  *   写库走其 /hits 批量子路径）；dbToken 是上报令牌（必填，与后端环境变量
  *   PANEL_HIT_TOKEN 一致）；记录用策略名默认 PROXY——Surge 不向规则脚本
- *   暴露命中策略，需与 SCRIPT 行的策略一致。
+ *   暴露命中策略，需与 SCRIPT 行的策略一致；username 是用户组 / 用户名
+ *   （多设备场景区分设备归属，v1.2 新增）。
  *
- * 设备来源取官方 API $environment["device-model"]（iOS 5.9+/Mac 5.5+），多设备按机型区分。
+ * 设备来源取官方 API $environment["device-model"]（iOS 5.9+/Mac 5.5+）；
+ * 来源 IP 由中转后端从请求连接捕获解析（脚本拿不到自己的公网出口 IP），
+ * 同型号多设备靠 用户名 + 来源 IP 区分，上报头携带 clientId / 设备型号 / 用户名。
  *
  * 上报合并（重要）：脚本本体每次命中都会被拉起，直接逐条发请求会让写 QPS 与
  * 未命中流量成正比。这里用持久化键 final_hit_buffer 做跨触发的去重窗口——
@@ -30,7 +33,7 @@
  */
 
 /** 脚本版本：随仓库发版注入（scripts/inject-version.mjs），与响应捎带的 latestLoggerVersion 比对 */
-var SCRIPT_VERSION = "1.1.1";
+var SCRIPT_VERSION = "1.2.0";
 var CONFIG_KEY = "final_db_config";
 /** 版本自报键：上报响应捎带 latestLoggerVersion 时写入，面板读取后展示升级提示 */
 var LOGGER_META_KEY = "final_logger_meta";
@@ -181,7 +184,7 @@ function noteLoggerVersion(rawBody) {
 }
 
 /** 批量上报：POST /api/logger/hits，一次请求提交整组命中 */
-function flushHits(endpoint, authToken, entries) {
+function flushHits(endpoint, authToken, entries, device) {
     var hits = [];
     for (var i = 0; i < entries.length; i++) {
         hits.push({
@@ -191,11 +194,21 @@ function flushHits(endpoint, authToken, entries) {
             value: entries[i].value,
             source: entries[i].source,
             policy: entries[i].policy,
-            params: entries[i].params
+            params: entries[i].params,
+            username: device.username
         });
     }
-    var headers = { "Content-Type": "application/json", "Authorization": "Bearer " + authToken };
-    var body = JSON.stringify({ hits: hits });
+    var headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + authToken,
+        // 设备上下文随请求头捎带：clientId 复用面板下发的标识（同设备两脚本一致），
+        // 来源 IP 由服务端从请求连接捕获，设备注册表据此维护在线状态与配置告警
+        "X-Final-Client": device.clientId || "",
+        "X-Final-Device": device.name || "",
+        "X-Final-User": device.username || "",
+        "X-Final-Logger": SCRIPT_VERSION
+    };
+    var body = JSON.stringify({ hits: hits, username: device.username || "" });
 
     try {
         // 官方 HTTP 客户端是 $httpClient，回调签名 (error, response, data)，状态码在 response.status
@@ -234,7 +247,15 @@ function main() {
     var rawUrl = (stored && trim(stored.dbUrl)) || args[0] || "";
     var authToken = (stored && trim(stored.dbToken)) || args[1] || "";
     var policy = (stored && trim(stored.policy)) || args[2] || "PROXY";
+    var username = (stored && trim(stored.username)) || args[3] || "";
     var sourceName = deviceSource() || "Unknown";
+    // 设备上下文：clientId 复用面板写入持久化的标识（两脚本同设备同标识），
+    // 用户名来自模块参数 FINAL_USER（经面板下发），型号取 $environment
+    var device = {
+        clientId: (stored && trim(stored.clientId)) || "",
+        name: sourceName,
+        username: username
+    };
 
     if (!rawUrl) {
         console.log("[FINAL] 未读到后端配置（先安装并配置面板模块，面板刷新一次即写入持久化），跳过写库");
@@ -297,7 +318,7 @@ function main() {
     var pending = bufferEntries(buffer);
     buffer.hits = {};
     writeStore(BUFFER_KEY, JSON.stringify(buffer));
-    flushHits(endpoint, authToken, pending);
+    flushHits(endpoint, authToken, pending, device);
 }
 
 main();

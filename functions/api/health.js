@@ -28,7 +28,8 @@ const TAG = 'api/health';
 const DEEP_THROTTLE_MS = 60 * 1000;
 const deepThrottle = new Map();
 
-const REQUIRED_LOG_COLUMNS = ['hostname', 'type', 'value', 'policy', 'params', 'comment', 'source', 'first_time', 'time', 'count'];
+const REQUIRED_LOG_COLUMNS = ['hostname', 'type', 'value', 'policy', 'params', 'comment', 'source', 'ip', 'username', 'first_time', 'time', 'count'];
+const REQUIRED_DEVICE_COLUMNS = ['device_id', 'name', 'username', 'ip', 'panel_version', 'logger_version', 'config_status', 'last_online_time'];
 
 /** 单项检查的可读锚点：readme 对应章节 */
 const DOC = {
@@ -141,8 +142,10 @@ function buildPipeline(env) {
     check(3, 'Schema 一致性', DOC.schema, async (ctx) => {
       const state = await describeSchemaState(ctx.db, 'surge_logs', REQUIRED_LOG_COLUMNS);
       if (!state.ok) return { status: 'fail', detail: state.detail, fix: '部署后访问 /api/schema 取建表语句，或等待首次访问自动迁移' };
+      const devices = await describeSchemaState(ctx.db, 'devices', REQUIRED_DEVICE_COLUMNS);
+      if (!devices.ok) return { status: 'fail', detail: devices.detail, fix: '首次访问任意 /api 接口会自动迁移；也可访问 /api/schema 取建表语句手工执行' };
       const label = ctx.db.backend === 'turso' ? 'Turso' : ctx.db.backend === 'd1' ? 'D1' : 'SQLite';
-      return { status: 'pass', detail: `${state.detail}；DB_SCHEMA_VERSION = ${DB_SCHEMA_VERSION}（${label}）` };
+      return { status: 'pass', detail: `${state.detail}；devices 注册表齐全；DB_SCHEMA_VERSION = ${DB_SCHEMA_VERSION}（${label}）` };
     }),
     check(4, '读权限', DOC.read, async (ctx) => {
       await ctx.db.execute('SELECT id FROM surge_logs LIMIT 1');

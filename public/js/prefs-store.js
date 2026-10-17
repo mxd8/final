@@ -29,6 +29,8 @@ export const keys = {
     captureExportSource: 'capture.export_source',
     captureExportWithSource: 'capture.export_with_source',
     captureExportType: 'capture.export_type',
+    /** 规则表表头显隐状态：JSON 数组，存隐藏列的 key（render.js TABLE_COLUMNS） */
+    tableColumns: 'table.hidden_columns',
     /** 全局导出筛选（订阅端 /api/export 读取的 user=export 配置） */
     exportMinCount: 'export.min_count',
     /** 全局导出筛选：最近 N 天命中过滤 */

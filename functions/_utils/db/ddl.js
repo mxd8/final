@@ -14,11 +14,12 @@
 
 import { asDbError } from './contract.js';
 
-export const DB_SCHEMA_VERSION = 1;
+export const DB_SCHEMA_VERSION = 2;
 
 export const DB_META_TABLE = 'db_meta';
 export const HEALTH_PROBE_TABLE = 'health_probe';
 export const HEARTBEATS_TABLE = 'client_heartbeats';
+export const DEVICES_TABLE = 'devices';
 
 /**
  * 建表 DDL 按单条语句拆分：Turso HTTP 管道每条语句单独执行，
@@ -47,15 +48,41 @@ const HEARTBEATS_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_${HEARTBEATS_TABLE}
 
 export const HEARTBEATS_SCHEMA = `${HEARTBEATS_TABLE_DDL}\n${HEARTBEATS_INDEX_DDL}`;
 
+/**
+ * devices：来源设备注册表（v2 新增）。
+ * 每个上报来源（面板心跳 / 捕获脚本批量上报）在此登记一行，记录用户组、
+ * 来源 IP（服务端从连接捕获）、最后上线时间与配置状态，支撑：
+ *   - 在线状态统计（n/m）：last_online_time + 刷新间隔推算离线；
+ *   - 同型号多设备区分：同型号但 IP / clientId 不同 → 不同 device_id；
+ *   - 配置告警：config_status = latest / outdated / failed（写入时按上报版本计算）。
+ */
+const DEVICES_TABLE_DDL = `CREATE TABLE IF NOT EXISTS ${DEVICES_TABLE} (
+  device_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  username TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  panel_version TEXT NOT NULL DEFAULT '',
+  logger_version TEXT NOT NULL DEFAULT '',
+  config_status TEXT NOT NULL DEFAULT 'failed',
+  refresh_seconds INTEGER NOT NULL DEFAULT 0,
+  last_online_time TEXT NOT NULL DEFAULT '',
+  first_seen TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);`.trim();
+
+const DEVICES_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_${DEVICES_TABLE}_online ON ${DEVICES_TABLE}(last_online_time);`.trim();
+
+export const DEVICES_SCHEMA = `${DEVICES_TABLE_DDL}\n${DEVICES_INDEX_DDL}`;
+
 export const DB_META_SCHEMA = `CREATE TABLE IF NOT EXISTS ${DB_META_TABLE} (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );`.trim();
 
 /** 执行用语句数组（每条单语句） */
-export const NEW_TABLES_DDL = [DB_META_SCHEMA, HEALTH_PROBE_SCHEMA, HEARTBEATS_TABLE_DDL, HEARTBEATS_INDEX_DDL];
+export const NEW_TABLES_DDL = [DB_META_SCHEMA, HEALTH_PROBE_SCHEMA, HEARTBEATS_TABLE_DDL, HEARTBEATS_INDEX_DDL, DEVICES_TABLE_DDL, DEVICES_INDEX_DDL];
 
-/** 全新数据库的一次性建表语句（version 1 的完整形态，与 sql/schema.sql 逐条对应） */
+/** 全新数据库的一次性建表语句（version 2 的完整形态，与 sql/schema.sql 逐条对应） */
 export const BASE_DDL = [
   `CREATE TABLE IF NOT EXISTS surge_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +93,8 @@ export const BASE_DDL = [
     params TEXT NOT NULL DEFAULT '',
     comment TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL DEFAULT '',
     first_time TEXT NOT NULL DEFAULT '',
     time TEXT NOT NULL,
     count INTEGER NOT NULL DEFAULT 1
@@ -74,6 +103,7 @@ export const BASE_DDL = [
   `CREATE INDEX IF NOT EXISTS idx_surge_logs_time ON surge_logs(time)`,
   `CREATE INDEX IF NOT EXISTS idx_surge_logs_type ON surge_logs(type)`,
   `CREATE INDEX IF NOT EXISTS idx_surge_logs_source ON surge_logs(source)`,
+  `CREATE INDEX IF NOT EXISTS idx_surge_logs_username ON surge_logs(username)`,
   `CREATE TABLE IF NOT EXISTS app_prefs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
@@ -104,7 +134,9 @@ export const BASE_DDL = [
   DB_META_SCHEMA,
   HEALTH_PROBE_SCHEMA,
   HEARTBEATS_TABLE_DDL,
-  HEARTBEATS_INDEX_DDL
+  HEARTBEATS_INDEX_DDL,
+  DEVICES_TABLE_DDL,
+  DEVICES_INDEX_DDL
 ];
 
 /**
@@ -112,7 +144,14 @@ export const BASE_DDL = [
  * 走 migrateLegacy 补齐 first_time 列与新表。新版本递增 DB_SCHEMA_VERSION 时在这里加步骤。
  */
 export const MIGRATION_STEPS = {
-  1: [DB_META_SCHEMA, HEALTH_PROBE_SCHEMA, HEARTBEATS_TABLE_DDL, HEARTBEATS_INDEX_DDL]
+  1: [DB_META_SCHEMA, HEALTH_PROBE_SCHEMA, HEARTBEATS_TABLE_DDL, HEARTBEATS_INDEX_DDL],
+  2: [
+    `ALTER TABLE surge_logs ADD COLUMN ip TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE surge_logs ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
+    `CREATE INDEX IF NOT EXISTS idx_surge_logs_username ON surge_logs(username)`,
+    DEVICES_TABLE_DDL,
+    DEVICES_INDEX_DDL
+  ]
 };
 
 /** 旧库的一次性补列迁移（原 logs/schema.js 的列探测逻辑收编到这里） */
@@ -153,19 +192,28 @@ async function writeSchemaVersion(db, version) {
 }
 
 /** 旧库补列：「列已存在」与「表不存在」都视为已完成，其余错误原样抛出 */
-async function migrateLegacy(db) {
-  for (const sql of LEGACY_MIGRATIONS) {
-    try {
-      await db.execute(sql);
-    } catch (error) {
-      const text = String(error?.message ?? '');
-      if (!/table.*does not exist|no such table/i.test(text) && !/duplicate column name/i.test(text)) {
-        throw asDbError(error);
-      }
+async function tolerantExecute(db, sql) {
+  try {
+    await db.execute(sql);
+  } catch (error) {
+    const text = String(error?.message ?? '');
+    if (!/table.*does not exist|no such table/i.test(text) && !/duplicate column name/i.test(text)) {
+      throw asDbError(error);
     }
   }
-  // 历史部署缺新表（健康探针 / 心跳注册表 / 版本表）：按当前版本的增量补齐
-  await db.batch((MIGRATION_STEPS[DB_SCHEMA_VERSION] ?? []).map((sql) => ({ sql })));
+}
+
+async function migrateLegacy(db) {
+  for (const sql of LEGACY_MIGRATIONS) {
+    await tolerantExecute(db, sql);
+  }
+  // 历史部署没有版本表，缺的是全部增量（v1 的健康设施表 + v2 的设备表与来源列）：
+  // 从 1 起逐版本补齐，逐条容忍「已存在」，与版本路径的原子 batch 区分开
+  for (let target = 1; target <= DB_SCHEMA_VERSION; target += 1) {
+    for (const sql of (MIGRATION_STEPS[target] ?? [])) {
+      await tolerantExecute(db, sql);
+    }
+  }
 }
 
 /**

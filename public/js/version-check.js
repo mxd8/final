@@ -189,11 +189,11 @@ export function renderVersionUi() {
     renderVersionBoard();
 }
 
-/** 初始化：顶栏徽标点击跳设置页看板；进入设置页时刷新看板数据 */
+/** 初始化：顶栏徽标点击跳设备检测视图（版本看板已并入）；进入该视图时刷新看板数据 */
 export function initVersionCheck() {
-    $('cpVersionBadge')?.addEventListener('click', () => switchPage('settings'));
+    $('cpVersionBadge')?.addEventListener('click', () => switchPage('devices'));
     document.addEventListener('cp:page', (event) => {
-        if (event.detail === 'settings') renderVersionBoard();
+        if (event.detail === 'devices' || event.detail === 'settings') renderVersionBoard();
     });
     renderVersionUi();
 }

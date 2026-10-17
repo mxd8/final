@@ -9,11 +9,19 @@
  *   2. FINAL_DB_TOKEN  上报令牌（必填，与后端环境变量 PANEL_HIT_TOKEN 一致；
  *                      面板自身匿名读取用不到，只负责下发给捕获脚本）
  *   3. FINAL_POLICY    捕获脚本记录用策略名，默认 PROXY（面板只负责转发）
+ *   4. FINAL_USER      用户组 / 用户名（可选，多设备场景区分设备归属，
+ *                      随心跳上报并写入持久化下发给捕获脚本）
+ *   5. FINAL_REFRESH   面板刷新间隔秒数（默认 600，参与服务端在线状态判定）
  *
  * 面板刷新时会把配置写入 Surge 持久化（显式键 final_db_config，官方
  * $persistentStore 支持跨脚本共享）：final-logger 捕获脚本只支持本地文件
  * （经模块模板 final-logger-src 在脚本编辑器中另存部署），从同一键读取配置——
  * 模块参数表填一次，两端脚本共用。
+ *
+ * 多设备识别（v1.2）：心跳在既有 /stats 请求上额外捎带设备型号（$environment
+ * device-model）与用户名；来源 IP 由中转后端从请求连接捕获解析——同型号多设备
+ * 靠 用户名 + 来源 IP 区分。/stats 响应的 deviceSummary 携带在线统计（n/m）
+ * 与分级告警（校验失败 / 配置过期 / 离线），面板正文直接渲染。
  */
 
 function trim(value) {
@@ -39,6 +47,8 @@ var args = parseArgument(typeof $argument === "undefined" ? "" : $argument);
 var rawUrl = args[0] || "";
 var dbToken = args[1] || "";
 var capturePolicy = args[2] || "PROXY";
+var username = args[3] || "";
+var refreshSeconds = Math.max(0, Math.floor(Number(args[4]) || 0)) || 600;
 
 var isHttps = /^https:\/\//.test(rawUrl);
 
@@ -59,7 +69,7 @@ var dbUrl = isHttps ? toApiUrl(rawUrl) : "";
 var webUrl = isHttps ? toWebUrl(rawUrl) : "";
 
 /** 脚本版本：随仓库发版注入（scripts/inject-version.mjs），上报与版本比对以此为准 */
-var SCRIPT_VERSION = "1.1.1";
+var SCRIPT_VERSION = "1.2.0";
 
 /** 把配置写入持久化，供本地部署的 final-logger 捕获脚本跨脚本读取（变更才落盘） */
 var CONFIG_KEY = "final_db_config";
@@ -115,8 +125,19 @@ function persistConfig() {
     config.dbUrl = dbUrl;
     config.dbToken = dbToken;
     config.policy = capturePolicy;
+    if (username) config.username = username;
     if (!config.clientId) config.clientId = randomClientId();
     writeStoreConfig(config);
+}
+
+/** 设备型号：官方 $environment["device-model"]，多设备识别用（拿不到留空） */
+function deviceModel() {
+    try {
+        if (typeof $environment !== "undefined" && $environment) {
+            return trim($environment["device-model"]);
+        }
+    } catch (error) {}
+    return "";
 }
 
 /** 读捕获脚本写入的版本自报（final_logger_meta）：{version, latest, at} */
@@ -160,6 +181,32 @@ function versionText(versionInfo) {
     return text;
 }
 
+/** 告警分级图标：severity 由服务端排好序（校验失败 → 配置过期 → 离线） */
+function alertIcon(level) {
+    if (level === "danger") return "🔴";
+    if (level === "warning") return "🟠";
+    return "⚪";
+}
+
+/** 设备行文本：在线统计（n/m）+ 每台告警设备一行（截断到 3 行防面板溢出） */
+function deviceText(deviceSummary) {
+    var summary = deviceSummary || {};
+    var total = Number(summary.total) || 0;
+    var online = Number(summary.online) || 0;
+    var alerts = summary.alerts || [];
+    if (!total) return "";
+    var text = "📱 设备在线: " + online + "/" + total;
+    for (var i = 0; i < alerts.length && i < 3; i++) {
+        var label = trim(alerts[i].name) || "未知设备";
+        if (trim(alerts[i].username)) label += "（" + trim(alerts[i].username) + "）";
+        text += "\n" + alertIcon(alerts[i].level) + " " + label + " " + trim(alerts[i].message);
+    }
+    if (alerts.length > 3) {
+        text += "\n… 另有 " + (alerts.length - 3) + " 条告警，见网页面板";
+    }
+    return text;
+}
+
 /** 统计并排版，中转后端 /stats 聚合结果直接喂进这里 */
 function render(stats, statusText, versionInfo) {
     versionInfo = versionInfo || {};
@@ -189,13 +236,16 @@ function render(stats, statusText, versionInfo) {
         }
     }
 
+    var devices = deviceText(stats.deviceSummary);
+
     var content =
         "📦 规则总数: " + totalRules + " 条  (💬 无备注: " + emptyCommentCount + ")\n" +
         "🔥 触发总计: " + totalHits + " 次  |  📅 今日新增: " + todayNew + " 条\n" +
         "🌐 代理: " + proxyCount + "  |  🟢 直连: " + directCount + "  |  🔴 拦截: " + rejectCount + "\n" +
         "----------------------------------------\n" +
         "🧩 规则类型: " + mapText(typeMap) + "\n" +
-        (hasSource ? "📱 来源设备: " + mapText(sourceMap) + "\n" : "") +
+        (devices ? devices + "\n" : "") +
+        (hasSource ? "📥 命中来源: " + mapText(sourceMap) + "\n" : "") +
         versionText(versionInfo) + "\n" +
         "[" + new Date().toLocaleTimeString() + "] " + statusText + "\n" +
         "🔗 后端: " + (dbUrl.split("/")[2] || dbUrl);
@@ -220,15 +270,19 @@ function mapText(map) {
   * 不再拉整份规则列表（原实现拉 5000 行只为算 6 个数字）。
   */
 function loadFromApi() {
-    // 心跳捎带：既有数据请求顺带上报客户端标识与版本（零新增请求、零新增配置），
-    // 鉴权走上报令牌（FINAL_DB_TOKEN，与面板数据同源），服务端据此维护客户端注册表
+    // 心跳捎带：既有数据请求顺带上报客户端标识、版本、设备型号与用户名（零新增请求），
+    // 鉴权走上报令牌（FINAL_DB_TOKEN，与面板数据同源）；服务端据此维护
+    // client_heartbeats（版本握手）与 devices（在线状态 / 配置告警）两张注册表
     var options = {
         url: dbUrl + "/stats",
         headers: {
             "Authorization": "Bearer " + dbToken,
             "X-Final-Client": ensureClientId(),
             "X-Final-Version": SCRIPT_VERSION,
-            "X-Final-Logger": (readLoggerMeta() || {}).version || ""
+            "X-Final-Logger": (readLoggerMeta() || {}).version || "",
+            "X-Final-Device": deviceModel(),
+            "X-Final-User": username,
+            "X-Final-Refresh": String(refreshSeconds)
         }
     };
     $httpClient.get(options, function (error, response, data) {

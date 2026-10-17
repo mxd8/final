@@ -118,6 +118,23 @@ function runPanel({ argument = '', storeSeed = null } = {}) {
   assert.equal(headers['X-Final-Version'], PANEL_V, '面板脚本自身版本随心跳上报');
 }
 
+// 用户组 / 用户名与刷新间隔（v1.2 多设备识别）：随配置持久化并随心跳上报
+{
+  const { calls, writes } = runPanel({ argument: 'https://final.pages.dev|ST|PROXY|boss|300' });
+  const headers = calls[0].opts.headers;
+  assert.equal(headers['X-Final-User'], 'boss', '用户名随心跳上报');
+  assert.equal(headers['X-Final-Refresh'], '300', '刷新间隔随心跳上报（服务端在线判定用）');
+  assert.ok('X-Final-Device' in headers, '设备型号头存在（无 $environment 时为空串）');
+  const stored = JSON.parse(writes[0].data);
+  assert.equal(stored.username, 'boss', '用户名写入持久化下发给捕获脚本');
+  assert.equal(stored.refreshSeconds, undefined, '刷新间隔只走心跳头，不进持久化键（键结构稳定）');
+
+  // 省略后两段：回落默认刷新间隔 600，用户名为空
+  const fallback = runPanel({ argument: 'https://final.pages.dev|ST|PROXY' });
+  assert.equal(fallback.calls[0].opts.headers['X-Final-Refresh'], '600', '未传刷新间隔回落 600');
+  assert.equal(JSON.parse(fallback.writes[0].data).username, undefined, '用户名为空不写入持久化');
+}
+
 // 智能识别：FINAL_WEB_URL 误填接口地址也能识别，GET 不重复拼路径
 {
   const { calls, done } = runPanel({ argument: 'https://final.pages.dev/api/logger/|ST|PROXY' });
@@ -204,20 +221,53 @@ function runPanel({ argument = '', storeSeed = null } = {}) {
   assert.equal(done.length, 1);
   assert.ok(done[0].content.includes('规则总数: 2 条'), '应统计到 2 条规则');
   assert.ok(done[0].content.includes('🟢 直连: 1'), 'DIRECT 计数正确');
-  assert.ok(done[0].content.includes('来源设备'), '有来源数据时展示来源设备');
+  assert.ok(done[0].content.includes('命中来源'), '有来源数据时展示命中来源行');
   assert.ok(done[0].content.includes('网页面板: https://final.pages.dev'));
   assert.ok(done[0].content.includes('后端: final.pages.dev'), '底部显示后端主机名');
   assert.equal(done[0].icon, 'chart.bar.fill');
   assert.equal(done[0]['icon-color'], '#0071e3', '面板图标颜色字段是官方 icon-color');
 }
 
-// 全部来源都是「未标注」时不展示来源设备行
+// 设备在线统计与告警（v1.2）：deviceSummary 携带 n/m 在线与分级告警，面板正文直接渲染
+{
+  const { calls, done } = runPanel({ argument: 'https://final.pages.dev|ST|PROXY' });
+  calls[0].cb(null, { status: 200 }, JSON.stringify({
+    data: {
+      totalRules: 3,
+      types: [],
+      sources: [{ name: 'iPhone15,3', count: 2 }],
+      deviceSummary: {
+        total: 2,
+        online: 1,
+        alertCount: 2,
+        alerts: [
+          { name: 'iPhone15,3', username: 'boss', type: 'failed', level: 'danger', message: '配置校验失败' },
+          { name: 'iPad Pro', username: '', type: 'offline', level: 'secondary', message: '设备离线' },
+        ],
+      },
+    },
+  }));
+  assert.ok(done[0].content.includes('设备在线: 1/2'), '在线统计 n/m 进入面板正文');
+  assert.ok(done[0].content.includes('配置校验失败'), '告警消息进入面板正文');
+  assert.ok(done[0].content.includes('设备离线'), '离线告警进入面板正文');
+  assert.ok(done[0].content.includes('boss'), '告警设备名可见');
+
+  // 无告警时正文不含告警行
+  const clean = runPanel({ argument: 'https://final.pages.dev|ST|PROXY' });
+  clean.calls[0].cb(null, { status: 200 }, JSON.stringify({
+    data: { totalRules: 1, deviceSummary: { total: 1, online: 1, alertCount: 0, alerts: [] } },
+  }));
+  assert.ok(clean.done[0].content.includes('设备在线: 1/1'));
+  assert.ok(!clean.done[0].content.includes('设备离线') && !clean.done[0].content.includes('配置过期') && !clean.done[0].content.includes('配置校验失败'), '无告警时不出现告警行');
+}
+
+// 全部来源都是「未标注」时不展示命中来源行
 {
   const { calls, done } = runPanel({ argument: 'https://final.pages.dev|ST|PROXY' });
   calls[0].cb(null, { status: 200 }, JSON.stringify({
     data: { totalRules: 1, sources: [{ name: '未标注', count: 1 }], types: [] },
   }));
-  assert.ok(!done[0].content.includes('来源设备'), '未标注桶不算设备来源');
+  assert.ok(!done[0].content.includes('命中来源'), '未标注桶不算设备来源');
 }
 
 // 版本看板行：默认渲染自身版本；服务端 latest 更新时给出升级提示
@@ -385,6 +435,29 @@ function expiredSeed(entries) {
   assert.ok(restored.hits['example.com'] && restored.hits['example.com'].count === 1, '本次命中同样放回缓冲');
 }
 
+// 用户名与设备上下文（v1.2）：持久化里的 username / clientId 随批量上报携带
+{
+  const { calls } = runLogger({
+    request: { hostname: 'example.com' },
+    environment: { 'device-model': 'iPhone15,3' },
+    storeSeed: {
+      final_db_config: JSON.stringify({
+        dbUrl: 'https://final.pages.dev', dbToken: 'ST', policy: 'PROXY',
+        username: 'boss', clientId: 'panel-0123456789ab',
+      }),
+      ...expiredSeed({}),
+    },
+  });
+  const headers = calls[0].opts.headers;
+  assert.equal(headers['X-Final-User'], 'boss', '用户名随请求头上报');
+  assert.equal(headers['X-Final-Client'], 'panel-0123456789ab', 'clientId 复用面板下发的标识（同设备两脚本一致）');
+  assert.equal(headers['X-Final-Device'], 'iPhone15,3', '设备型号随请求头上报');
+  assert.equal(headers['X-Final-Logger'], LOGGER_V, '捕获脚本自报版本随请求头上报');
+  const body = JSON.parse(calls[0].opts.body);
+  assert.equal(body.username, 'boss', '请求体顶层带用户名（服务端兜底字段）');
+  assert.ok(body.hits.every((h) => h.username === 'boss'), '每条命中携带用户名');
+}
+
 // 从持久化读取面板下发的配置；持久化里已是 /api/logger 完整接口地址时也不重复补全
 {
   const { calls } = runLogger({
@@ -512,9 +585,10 @@ function expiredSeed(entries) {
   assert.ok(!/final-logger-src[^\n]*argument=/.test(sgmoduleSrc), '模板条目自身不传参、不参与分流（配置走持久化）');
   assert.ok(sgmoduleSrc.includes('update-interval={{{FINAL_REFRESH}}}'), '刷新间隔用参数占位符');
   assert.ok(
-    sgmoduleSrc.includes('argument="{{{FINAL_WEB_URL}}}|{{{FINAL_DB_TOKEN}}}|{{{FINAL_POLICY}}}"'),
-    '面板 argument 三段占位符与参数表顺序一致',
+    sgmoduleSrc.includes('argument="{{{FINAL_WEB_URL}}}|{{{FINAL_DB_TOKEN}}}|{{{FINAL_POLICY}}}|{{{FINAL_USER}}}|{{{FINAL_REFRESH}}}"'),
+    '面板 argument 五段占位符与参数表顺序一致（地址|令牌|策略|用户名|刷新间隔）',
   );
+  assert.ok(sgmoduleSrc.includes('FINAL_USER'), '参数表声明用户组 / 用户名配置项（多设备区分）');
   assert.ok(sgmoduleSrc.includes('final_db_config'), '模块注释声明持久化键');
   assert.ok(loggerSrc.includes('var CONFIG_KEY = "final_db_config"'), '捕获脚本读同一持久化键');
   assert.ok(panelSrc.includes('var CONFIG_KEY = "final_db_config"'), '面板脚本写同一持久化键');

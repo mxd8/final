@@ -66,18 +66,19 @@ final/
 │   │   ├── prefs.js + prefs/[[rest]].js
 │   │   └── schema.js                #   /api/schema（建表 DDL 下发）
 ├── public/                          # 前端静态资源
-│   ├── index.html                   #   单页面板（五视图：首页/数据/AI配置/设置/配置检测）
+│   ├── index.html                   #   单页面板（四视图：首页/数据/AI配置/设置 + 设备检测隐藏页）
 │   ├── _headers                     #   静态缓存策略（/ no-store、/surge/* max-age=300）
 │   ├── style.css / captured.css
-│   └── js/                          #   ES Module 前端（23 个模块，main.js 为入口）
+│   └── js/                          #   ES Module 前端（24 个模块，main.js 为入口）
 │       ├── main.js                  #     入口：装配 window.capturePanel + 事件绑定
 │       ├── config.js dom.js notify.js ruletext.js api.js clipboard.js
 │       ├── prefs-store.js render.js export.js refresh.js
 │       ├── edit.js actions.js subscribe.js sync.js settings.js ipnet.js
-│       ├── nav.js levels.js pwa.js
+│       ├── nav.js levels.js pwa.js devices.js
 │       └── version.js version-check.js health.js
-│           # nav=五视图导航  levels=降维候选  ipnet=IP 数学  pwa=Service Worker
-│           # version=版本常量(生成)  version-check=版本比对/看板/更新横幅  health=配置检测视图
+│           # nav=页面路由（设备检测为隐藏页）  levels=降维候选  ipnet=IP 数学  pwa=Service Worker
+│           # version=版本常量(生成)  version-check=版本比对/看板/更新横幅
+│           # health=配置检测  devices=设备检测综合视图（设备状态+告警+检测+版本聚合）
 ├── surge/                           # Surge 单文件脚本（运行时约束，不可拆分）
 │   ├── final-logger.js              #   FINAL 命中捕获 → 持久化缓冲去重 → 经中转后端 /hits 批量写库（经模板另存为本地脚本）
 │   ├── final-panel.js               #   Surge [Panel] 实时统计面板 + 配置写入持久化
@@ -118,14 +119,14 @@ api/*.js（薄分发）
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| GET | `/api/logger` | 匿名 | 规则列表（`?search=&policy=&type=&limit=`，默认 5000、上限 50000，按最近命中倒序） |
-| GET | `/api/logger/stats` | 匿名 | 统计（`?tz=` 设备本地时区偏移，分钟）；带 `x-final-client` 心跳头 + 上报令牌时记录客户端心跳，响应捎带 `latest` 组件版本与最近心跳清单 |
+| GET | `/api/logger` | 匿名 | 规则列表（`?search=&policy=&type=&limit=`，默认 5000、上限 50000，按最近命中倒序）；行含 `ip` / `username` 来源字段 |
+| GET | `/api/logger/stats` | 匿名 | 统计（`?tz=` 设备本地时区偏移，分钟）；带 `x-final-client` 心跳头 + 上报令牌时记录客户端心跳与设备登记，响应捎带 `latest` 组件版本、最近心跳清单与 `devices` / `deviceSummary` 设备报表（在线 n/m + 分级告警） |
 | GET | `/api/logger/export` | 匿名 | 订阅文本（`?type=&source=&with-source=&min-count=&last-days=&meta=1`） |
 | GET | `/api/logger/export-summary` | 匿名 | 导出前核对摘要（与 `/export` 同一套过滤，含 `last-days`） |
 | GET | `/api/logger/schema` · `/meta` | 匿名 | surge_logs 建表 DDL / 规则类型·参数·策略常量（含 `writeAuthRequired`）；`/meta` 另带 `version` 版本清单（serverVersion / components / dbSchemaVersion），no-store，是版本比对的唯一基准 |
 | GET | `/api/export[/...]` | 匿名 | 固定订阅导出：`?policy=all\|proxy\|direct\|reject`，筛选读偏好表 `user=export`，显式查询参数优先 |
-| POST | `/api/logger/hit` | 上报令牌（必配） | Surge 命中上报（`?token=` 或 Bearer 头），扁平体 `{hostname,type,value,source,policy,params}` |
-| POST | `/api/logger/hits` | 上报令牌（必配） | Surge 批量上报：`{hits:[{hostname,count?,...}]}`，同主机名合并次数、单次上限 200，捕获脚本去重窗口的入口 |
+| POST | `/api/logger/hit` | 上报令牌（必配） | Surge 命中上报（`?token=` 或 Bearer 头），扁平体 `{hostname,type,value,source,policy,params}`；`ip` 由服务端从连接捕获、`username` 可选携带 |
+| POST | `/api/logger/hits` | 上报令牌（必配） | Surge 批量上报：`{hits:[{hostname,count?,...}], username?}`，同主机名合并次数、单次上限 200，捕获脚本去重窗口的入口；设备上下文（X-Final-Client/Device/User/Logger 头）随请求登记进 devices 注册表 |
 | POST | `/api/logger/update·delete·exclude·batch·clear·clear-empty` | 写令牌 | 面板写操作；`clear` 另需 `{"confirm":true}` |
 | GET | `/api/subscribe` · `/api/subscribe/schema` | 匿名 | 已保存订阅 / 建表 DDL |
 | POST | `/api/subscribe/parse·save·delete` | 写令牌 | 服务端抓取解析 / 保存 / 删除 |
@@ -133,7 +134,7 @@ api/*.js（薄分发）
 | POST | `/api/rules` · PUT·DELETE `/api/rules/:id` | 写令牌 | 旧版 rules 表增改删（兼容保留） |
 | GET·POST·DELETE | `/api/prefs` · GET `/api/prefs/schema` | 配置写令牌后读写删全部需令牌 | 偏好读写删（`?user=` 设备标识；DELETE 带 `key=` 或 `key=__all__`；`gist.token` 存这张表，不能匿名读） |
 | GET | `/api/health` | 匿名（deep 在配置写令牌后需令牌） | 部署健康检测：`?mode=basic`（默认，全只读）/ `?mode=deep`（写探针三步同事务、令牌校验、按 IP 每分钟一次）；返回逐项状态 / 耗时 / 修复建议 / 文档锚点与汇总，全程脱敏 |
-| GET | `/api/schema[/table/:key]` | 匿名 | 全量 / 单表 DDL（`rules`/`logger`/`prefs`/`subscriptions`/`health`/`heartbeats`/`meta`） |
+| GET | `/api/schema[/table/:key]` | 匿名 | 全量 / 单表 DDL（`rules`/`logger`/`prefs`/`subscriptions`/`health`/`heartbeats`/`devices`/`meta`） |
 
 响应约定：`/api/logger`、`/api/subscribe` 下的只读接口带 `Cache-Control: public, max-age=30`
 （`/api/logger/export` 为 60），写操作与 `/hit` 带 `no-store`（`/api/prefs` 的写接口不设缓存头）；
@@ -240,6 +241,8 @@ CREATE TABLE IF NOT EXISTS surge_logs (
   params TEXT NOT NULL DEFAULT '',            -- 逗号分隔：no-resolve,pre-matching,...
   comment TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT '',            -- 上报设备名
+  ip TEXT NOT NULL DEFAULT '',                -- 来源 IP（v2：服务端从连接捕获）
+  username TEXT NOT NULL DEFAULT '',          -- 用户名/用户组（v2：模块参数 FINAL_USER）
   first_time TEXT NOT NULL DEFAULT '',
   time TEXT NOT NULL,                          -- 最近命中，UTC ISO
   count INTEGER NOT NULL DEFAULT 1
@@ -248,6 +251,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_surge_logs_hostname ON surge_logs(hostnam
 CREATE INDEX IF NOT EXISTS idx_surge_logs_time ON surge_logs(time);
 CREATE INDEX IF NOT EXISTS idx_surge_logs_type ON surge_logs(type);
 CREATE INDEX IF NOT EXISTS idx_surge_logs_source ON surge_logs(source);
+CREATE INDEX IF NOT EXISTS idx_surge_logs_username ON surge_logs(username);
+
+CREATE TABLE IF NOT EXISTS devices (
+  device_id TEXT PRIMARY KEY,                  -- 面板 clientId（client:）或 用户名|型号|IP（dev:）
+  name TEXT NOT NULL DEFAULT '',               -- 设备型号
+  username TEXT NOT NULL DEFAULT '',           -- 用户组/用户名
+  ip TEXT NOT NULL DEFAULT '',                 -- 最近来源 IP
+  panel_version TEXT NOT NULL DEFAULT '',      -- 面板脚本自报版本
+  logger_version TEXT NOT NULL DEFAULT '',     -- 捕获脚本自报版本
+  config_status TEXT NOT NULL DEFAULT 'failed',-- latest / outdated / failed
+  refresh_seconds INTEGER NOT NULL DEFAULT 0,  -- 面板刷新间隔（在线判定用）
+  last_online_time TEXT NOT NULL DEFAULT '',   -- 最后上线时间（离线判定用）
+  first_seen TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_devices_online ON devices(last_online_time);
 
 CREATE TABLE IF NOT EXISTS app_prefs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -280,7 +299,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 ```
 
-> 老库缺列要分开看：`/api/logger` 首次访问只会自动补 `first_time` 一列（`ensureMigrations`），
+> 老库缺列要分开看：`/api/logger` 首次访问会按 `db_meta` 版本表自动迁移
+> （v2 自动补 `ip` / `username` 列并建 `devices` 表，v1 自动补 `first_time`），
 > `type`/`value`/`params`/`source` 得按 `sql/schema.sql` 末尾的 `ALTER TABLE` 语句手工补齐；
 > 历史脏数据（策略被写成参数名、`first_time` 为空）可以跑
 > `node scripts/repair-logs.mjs`（默认 dry-run，加 `--apply` 才执行）。
@@ -288,7 +308,7 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 ### 5. 验证部署
 
 - 打开 `https://<项目名>.pages.dev`：面板正常加载、能拉到规则列表；
-- 打开面板导航「🩺 配置检测」：基础检测自动执行，数据库连通 / Schema / 读权限应为通过（写令牌未录入时为警告项）；
+- 点击首页实时统计的「来源设备」卡片：进入设备检测综合视图，基础检测自动执行，数据库连通 / Schema / 读权限应为通过（写令牌未录入时为警告项），多设备在线状态与配置告警在同一视图展示；
 - 访问 `https://<项目名>.pages.dev/api/logger/meta`：返回 JSON（含 `writeAuthRequired` 与 `version` 字段）而非 HTML；
 - 访问 `https://<项目名>.pages.dev/api/export?policy=proxy`：返回订阅文本（默认带 `# Generated by` 统计头），说明固定订阅地址可用；
 - 之后 Surge 端把 `FINAL_WEB_URL` 填成 `https://<项目名>.pages.dev`、`FINAL_DB_TOKEN` 填第 3 步的上报令牌即可（中转地址自动补全，见下文「Surge 安装教程」）。
@@ -310,7 +330,35 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 > `final`（Git 集成创建时默认用仓库名），手动部署请用上表的 wrangler 命令带上真实项目名，
 > 否则会部署到另一个项目。
 
-## 版本与更新、配置检测与多数据库工厂（v1.1.0）
+## 版本与更新、设备检测与多数据库工厂
+
+### 多设备状态检测与设备检测综合视图（v1.2.0）
+
+首页实时统计的「来源设备」卡片可点击，进入 **📱 设备检测** 综合视图（顶部导航不再
+单列「🩺 配置检测」，设置页的「🧭 版本与更新」也已并入），一个视图聚合：
+
+- **设备在线状态**：每台设备一行（用户组 · 型号 · 来源 IP · 版本 · 最后上线时间），
+  汇总徽标展示在线统计（如「在线 3 / 10」）。在线判定基于请求时间戳超时：
+  最后上线时间距今超过 `max(5 分钟, 2 × 设备上报的刷新间隔)` 即离线——面板默认
+  600 秒刷新一次，只按 5 分钟判会把正常设备误判离线，因此以设备自己的刷新节奏兜底；
+- **配置告警分级**（按严重程度着色，醒目展示）：🔴 校验失败（设备从未上报组件
+  版本）→ 🟠 配置过期（组件版本落后于服务端部署版本）→ ⚪ 离线；Surge 面板正文
+  同步渲染在线统计与前 3 条告警；
+- **配置检测**：原独立页的全部能力（基础 / 深度检测、诊断报告复制）原样并入；
+- **版本与更新**：原设置页看板整体并入，顶栏更新徽标点击直达。
+
+多设备识别的三个维度（解决「仅靠设备型号无法区分同型号多设备」）：
+
+| 维度 | 来源 | 说明 |
+|---|---|---|
+| 用户组 / 用户名 | 模块参数 `FINAL_USER` → 持久化 `final_db_config.username` | 面板心跳与捕获上报自动携带 |
+| 来源 IP | 中转后端从请求连接捕获（`CF-Connecting-IP`） | Surge 端拿不到自己的公网出口 IP，由服务端解析最可靠 |
+| 客户端标识 | 面板生成的 clientId（两脚本共用持久化） | 跨网络稳定；旧客户端回落 用户名\|型号\|IP 三元组 |
+
+规则表同步新增「来源 IP」列（与来源 / 用户名一起参与搜索），表头支持
+「🧱 列显示」多选配置各列显隐；主题、导航位置、筛选下拉框、列显隐、导出筛选
+等个性化状态全部持久化到数据库（偏好表），跨设备同步；列显隐等高频变更走
+「本地缓存 + 防抖合并写入」，不产生写库压力。
 
 ### 版本体系与一致性比对
 
@@ -341,9 +389,9 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
   三件套会重新注入为你自己的域名（静态文件随 dist 发布，`/surge/*` 带 max-age=300 与
   版本参数双保险，替代 GitHub raw 的边缘缓存与可达性问题）。
 
-### 部署健康检测（配置检测页）
+### 部署健康检测（配置检测，已并入设备检测视图）
 
-导航「🩺 配置检测」打开即自动执行基础检测（单次请求，无逐项轮询）：
+进入「📱 设备检测」综合视图即自动执行基础检测（单次请求，无逐项轮询）：
 
 - **basic（全只读）**：环境变量在位与格式 → 数据库 ping → Schema 一致性（表 / 列 /
   `DB_SCHEMA_VERSION`）→ 读权限 → 令牌在位性 → Surge 客户端心跳状态；
@@ -494,7 +542,9 @@ https://raw.githubusercontent.com/mxd8/final/main/surge/final.sgmodule
   （误填接口地址也能识别），同时显示在统计面板底部
 - `FINAL_DB_TOKEN`：上报令牌（必填），与后端环境变量 `PANEL_HIT_TOKEN` 一致
 - `FINAL_POLICY`：捕获脚本写库记录的策略名，默认 `PROXY`（见下文第 3 步）
-- `FINAL_REFRESH`：面板自动刷新间隔秒数，默认 `600`
+- `FINAL_USER`：用户组 / 用户名（可选，多设备场景区分设备归属，如「iPhone-主人」；
+  随上报自动携带入库，与来源 IP 一起用于区分同型号多设备）
+- `FINAL_REFRESH`：面板自动刷新间隔秒数，默认 `600`（同时参与设备在线状态判定）
 
 参数用 Surge 官方参数表声明（`#!arguments=`），装载时 Surge 把正文里的 `{{{参数}}}`
 占位符替换成实际值，经 `[Script]` 行的 `argument=` 传给面板脚本——改配置只动参数表。

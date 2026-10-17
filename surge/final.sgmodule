@@ -1,8 +1,8 @@
 #!name=FINAL 统计与捕获
-#!desc=Surge 首页面板实时统计 FINAL 命中数据，并内置捕获脚本模板（脚本编辑器中另存为本地脚本后经 SCRIPT 规则触发，经中转后端写库）
-#!version=1.1.1 (bd72f11)
-#!arguments=FINAL_WEB_URL,FINAL_DB_TOKEN,FINAL_POLICY:PROXY,FINAL_REFRESH:600
-#!arguments-desc=FINAL_WEB_URL：网页管理面板地址（必填，中转地址自动补全 /api/logger，误填接口地址也能识别）；FINAL_DB_TOKEN：上报令牌（必填，与后端环境变量 PANEL_HIT_TOKEN 一致）；FINAL_POLICY：捕获脚本记录用策略名（默认 PROXY，与 [Rule] 里 SCRIPT,final-logger,<策略> 行一致）；FINAL_REFRESH：面板自动刷新间隔秒数（默认 600）
+#!desc=Surge 首页面板实时统计 FINAL 命中数据，并内置捕获脚本模板（脚本编辑器中另存为本地脚本后经 SCRIPT 规则触发，经中转后端写库）。支持多设备用户组区分、来源 IP 捕获与设备在线状态监控。
+#!version=1.2.0 (c2f65ac)
+#!arguments=FINAL_WEB_URL,FINAL_DB_TOKEN,FINAL_POLICY:PROXY,FINAL_USER,FINAL_REFRESH:600
+#!arguments-desc=FINAL_WEB_URL：网页管理面板地址（必填，中转地址自动补全 /api/logger，误填接口地址也能识别）；FINAL_DB_TOKEN：上报令牌（必填，与后端环境变量 PANEL_HIT_TOKEN 一致）；FINAL_POLICY：捕获脚本记录用策略名（默认 PROXY，与 [Rule] 里 SCRIPT,final-logger,<策略> 行一致）；FINAL_USER：用户组 / 用户名（可选，多设备场景下区分设备归属，随上报自动携带并入库）；FINAL_REFRESH：面板自动刷新间隔秒数（默认 600，同时参与设备在线状态判定）
 #
 # ── 配置下发（重要）───────────────────────────────────────
 #
@@ -19,11 +19,19 @@
 #     3. 到 [Rule] 末尾添加 SCRIPT,final-logger,<策略>，策略与 FINAL_POLICY 参数一致。
 #   完整步骤见 readme「Surge 安装教程」。
 #
+# ── 多设备识别（v1.2 新增）────────────────────────────────
+#
+#   用户组 / 用户名：参数表填 FINAL_USER（如「iPhone-主人」「iPad-家人」），
+#   面板与捕获脚本自动随请求携带并入库（surge_logs.username / devices.username）。
+#   来源 IP：由中转后端从请求连接自动捕获解析（Surge 端拿不到自己的公网出口
+#   IP），同型号多设备靠 用户名 + 来源 IP 区分，网页面板「来源设备」卡片
+#   点击可查看每台设备的在线状态（n/m）与配置告警。
+#
 # ── 说明 ─────────────────────────────────────────────────
 #
 #   面板从 FINAL_WEB_URL 推导出的中转后端读取实时数据渲染，无本地持久化；
 #   未配置面板地址或上报令牌时面板会明确提示。
-#   数据库表结构与建表语句见 readme「部署教程」，或部署后访问 /api/logger/schema 取回。
+#   数据库表结构与建表语句见 readme「部署教程」，或部署后访问 /api/schema 取回。
 
 [Panel]
 # 统计面板：读由 FINAL_WEB_URL 补全出的中转后端
@@ -31,10 +39,10 @@ final-stats = script-name=final-stats, title="FINAL 流量与规则统计", cont
 
 [Script]
 # 统计面板脚本：脚本本体经外链 script-path 加载，随仓库自动更新。
-# argument 依次为 面板地址|上报令牌|捕获策略，三项经面板写入持久化供捕获脚本读取
-final-stats = type=generic, script-path=https://final-axx.pages.dev/surge/final-panel.js?v=1.1.1, timeout=15, argument="{{{FINAL_WEB_URL}}}|{{{FINAL_DB_TOKEN}}}|{{{FINAL_POLICY}}}"
+# argument 依次为 面板地址|上报令牌|捕获策略|用户名|刷新间隔，经面板写入持久化供捕获脚本读取
+final-stats = type=generic, script-path=https://final-axx.pages.dev/surge/final-panel.js?v=1.2.0, timeout=15, argument="{{{FINAL_WEB_URL}}}|{{{FINAL_DB_TOKEN}}}|{{{FINAL_POLICY}}}|{{{FINAL_USER}}}|{{{FINAL_REFRESH}}}"
 
 # 捕获脚本模板：规则脚本只支持本地文件，此引用只为在脚本编辑器中打开后另存为本地脚本——
 # 本地副本命名 final-logger，由 [Rule] 的 SCRIPT,final-logger,<策略> 触发，
 # 配置读持久化 final_db_config，本条目自身不参与分流。
-final-logger-src = type=rule, script-path=https://final-axx.pages.dev/surge/final-logger.js?v=1.1.1, timeout=10
+final-logger-src = type=rule, script-path=https://final-axx.pages.dev/surge/final-logger.js?v=1.2.0, timeout=10
