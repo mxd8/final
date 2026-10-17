@@ -96,6 +96,26 @@ export function requireWriteToken(env, request) {
   return null;
 }
 
+/**
+ * 写接口鉴权（URL 查询参数或请求头）：供 /api/ai/run 这类被外部定时器
+ * （cron-job.org / Worker cron / NAS crontab）调用的端点使用 —— 它们不便带
+ * Authorization 头，允许 ?token= 查询参数；与写令牌变量同一组合法令牌。
+ */
+export function requireUrlOrHeaderWriteToken(env, context) {
+  const configured = splitTokenList(configuredWriteToken(env));
+  if (!configured.length) return null;
+
+  const supplied = extractUrlOrHeaderToken(context);
+  if (!isAnyTokenMatch(configured, supplied)) {
+    console.warn(`[${WRITE_TOKEN_VAR}] 写接口鉴权失败（查询参数/请求头）：${context.request.method} ${context.request.url}`);
+    return jsonResponse(
+      { success: false, error: '未通过写操作鉴权：请在请求头或 ?token= 查询参数中携带正确的写接口令牌' },
+      { status: 401, headers: { 'Cache-Control': 'no-store' } }
+    );
+  }
+  return null;
+}
+
 /** 上报接口鉴权：必须配置 PANEL_HIT_TOKEN（写令牌也可匹配），未配置一律拒绝 */
 export function requireHitToken(env, supplied) {
   const tokens = anyConfiguredToken(env);

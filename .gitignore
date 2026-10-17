@@ -153,3 +153,6 @@ temp/
 *.pid.lock
 run/
 *.rdb
+
+# ZCode 会话工作目录（工作流脚本、草稿等本地产物）
+.zcode/

@@ -46,7 +46,11 @@ CREATE TABLE IF NOT EXISTS surge_logs (
     -- 最近一次命中时间，UTC ISO 字符串；面板按设备本地日统计「今日新增」
     time TEXT NOT NULL,
     -- 触发次数，命中一次 +1
-    count INTEGER NOT NULL DEFAULT 1
+    count INTEGER NOT NULL DEFAULT 1,
+    -- ✏️ 快速编辑过（手动调整）：AI 调度优先排队，但不改写其分流策略
+    manual_edited INTEGER NOT NULL DEFAULT 0,
+    -- AI 已处理过：自动化调度跳过，防止每轮重复分析同一条规则
+    ai_processed INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_surge_logs_hostname ON surge_logs(hostname);
@@ -162,6 +166,8 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 --   ALTER TABLE surge_logs ADD COLUMN first_time TEXT NOT NULL DEFAULT '';
 --   ALTER TABLE surge_logs ADD COLUMN ip TEXT NOT NULL DEFAULT '';        -- v2：来源 IP
 --   ALTER TABLE surge_logs ADD COLUMN username TEXT NOT NULL DEFAULT ''; -- v2：用户名/用户组
+--   ALTER TABLE surge_logs ADD COLUMN manual_edited INTEGER NOT NULL DEFAULT 0; -- v3：✏️ 手动编辑标记
+--   ALTER TABLE surge_logs ADD COLUMN ai_processed INTEGER NOT NULL DEFAULT 0;  -- v3：AI 已处理标记
 --
 -- v2 新增设备注册表（在线状态 / 配置告警），直接执行上文 devices 的 CREATE 语句即可
 --

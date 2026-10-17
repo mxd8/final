@@ -17,6 +17,7 @@ import { deleteLog, clearEmpty, wipeDatabase, onWipeInput, confirmWipe, reduceEx
 import { openSubscribeModal, parseSubscriptions, reparseSubscription, deleteSubscription, clearSubInput, loadSubscriptions } from './subscribe.js';
 import { saveGistConfig, uploadToGist, syncFromGist } from './sync.js';
 import { applyPreferences, setTheme, toggleTheme, savePrompt, saveOnlyEmptyPref, saveWriteToken } from './settings.js';
+import { aiSaveConnection, aiSaveSchedule, aiLoadModels, aiTestConnection, aiRefreshStatus, aiRunNow, aiResetProcessed, startAiScheduler } from './ai.js';
 import { initVersionCheck } from './version-check.js';
 import { initHealthView, runHealthChecksBasic, runDeepConfirmed, copyHealthReport } from './health.js';
 import { setExportType, setMinCount, applyCustomMinCount, clearMinCount, setLastDays, onExportOptionChange, copyExportLink, copyPageDomains, restoreExportFilters, refreshExportSummary } from './export.js';
@@ -165,6 +166,8 @@ function initCapturedPanel() {
     wireExportControls();
     initVersionCheck();
     initHealthView();
+    // AI 分流自动化：前端调度器（面板打开期间按周期触发）+ AI 页面懒加载
+    startAiScheduler();
     // 进入设备检测综合视图时用已加载的 stats 数据即时渲染设备面板（刷新后由 doRefreshAll 再刷新）
     document.addEventListener('cp:page', (event) => {
         if (event.detail === 'devices') renderDevicePanel();
@@ -212,6 +215,13 @@ window.capturePanel = {
     saveGistConfig,
     uploadToGist,
     syncFromGist,
+    aiSaveConnection,
+    aiSaveSchedule,
+    aiLoadModels,
+    aiTestConnection,
+    aiRefreshStatus,
+    aiRunNow,
+    aiResetProcessed,
     runHealthChecks: runHealthChecksBasic,
     confirmDeepHealth: runDeepConfirmed,
     copyHealthReport

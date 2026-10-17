@@ -55,6 +55,7 @@ final/
 │   ├── api/                         # 路由层（每个文件即真实路由，内含薄分发）
 │   │   ├── _logger/                 #   logger 路由实现（constants/exporter/reads/writes）
 │   │   ├── _subscribe/              #   subscribe 路由实现（constants/guard/cache/extract/routes）
+│   │   ├── _ai/                     #   ai 路由实现（config/client/selector/executor）
 │   │   ├── logger.js                #   /api/logger[/...]
 │   │   ├── logger/[[rest]].js       #   兜底路由：让 /api/logger 全部子路径命中上者
 │   │   ├── health.js                #   /api/health（部署健康检测：basic 只读 / deep 写探针）
@@ -62,6 +63,7 @@ final/
 │   │   ├── export.js                #   /api/export（固定订阅导出，筛选条件读偏好表）
 │   │   ├── export/[[rest]].js       #   兜底路由：/api/export 子路径同样命中上者
 │   │   ├── subscribe.js             #   /api/subscribe[/...]
+│   │   ├── ai.js + ai/[[rest]].js   #   /api/ai[/...]（Workers AI 自动分流）
 │   │   ├── rules.js                 #   /api/rules[/...]（旧版表，兼容保留）
 │   │   ├── prefs.js + prefs/[[rest]].js
 │   │   └── schema.js                #   /api/schema（建表 DDL 下发）
@@ -69,16 +71,17 @@ final/
 │   ├── index.html                   #   单页面板（四视图：首页/数据/AI配置/设置 + 设备检测隐藏页）
 │   ├── _headers                     #   静态缓存策略（/ no-store、/surge/* max-age=300）
 │   ├── style.css / captured.css
-│   └── js/                          #   ES Module 前端（24 个模块，main.js 为入口）
+│   └── js/                          #   ES Module 前端（25 个模块，main.js 为入口）
 │       ├── main.js                  #     入口：装配 window.capturePanel + 事件绑定
 │       ├── config.js dom.js notify.js ruletext.js api.js clipboard.js
 │       ├── prefs-store.js render.js export.js refresh.js
 │       ├── edit.js actions.js subscribe.js sync.js settings.js ipnet.js
 │       ├── nav.js levels.js pwa.js devices.js
-│       └── version.js version-check.js health.js
+│       └── version.js version-check.js health.js ai.js
 │           # nav=页面路由（设备检测为隐藏页）  levels=降维候选  ipnet=IP 数学  pwa=Service Worker
 │           # version=版本常量(生成)  version-check=版本比对/看板/更新横幅
 │           # health=配置检测  devices=设备检测综合视图（设备状态+告警+检测+版本聚合）
+│           # ai=Workers AI 连接/调度/队列状态 + 前端调度器（面板打开期间按周期触发）
 ├── surge/                           # Surge 单文件脚本（运行时约束，不可拆分）
 │   ├── final-logger.js              #   FINAL 命中捕获 → 持久化缓冲去重 → 经中转后端 /hits 批量写库（经模板另存为本地脚本）
 │   ├── final-panel.js               #   Surge [Panel] 实时统计面板 + 配置写入持久化
@@ -134,6 +137,11 @@ api/*.js（薄分发）
 | POST | `/api/rules` · PUT·DELETE `/api/rules/:id` | 写令牌 | 旧版 rules 表增改删（兼容保留） |
 | GET·POST·DELETE | `/api/prefs` · GET `/api/prefs/schema` | 配置写令牌后读写删全部需令牌 | 偏好读写删（`?user=` 设备标识；DELETE 带 `key=` 或 `key=__all__`；`gist.token` 存这张表，不能匿名读） |
 | GET | `/api/health` | 匿名（deep 在配置写令牌后需令牌） | 部署健康检测：`?mode=basic`（默认，全只读）/ `?mode=deep`（写探针三步同事务、令牌校验、按 IP 每分钟一次）；返回逐项状态 / 耗时 / 修复建议 / 文档锚点与汇总，全程脱敏 |
+| GET | `/api/ai/config` · `/api/ai/status` | 匿名 | AI 分流自动化：读全局配置（token 只回掩码）/ 队列统计 + 上次运行摘要 + 下次可运行时间 |
+| POST | `/api/ai/config` | 写令牌 | 保存 Workers AI 连接与调度配置（token 留空或传掩码 = 保留旧值） |
+| GET | `/api/ai/models` · POST `/api/ai/test` | 写令牌 | 代理拉取账号可用文本生成模型 / 跑一条最小推理测连通 |
+| POST | `/api/ai/run` | 写令牌（额外接受 `?token=`，供外部定时器） | 执行一轮批量分流（一批 = `batchSize` 条）；冷却期内返回 `skipped`，`?force=1` 跳过 |
+| POST | `/api/ai/reset` | 写令牌 | 清空 `ai_processed` 标记，全部候选规则重新参与调度 |
 | GET | `/api/schema[/table/:key]` | 匿名 | 全量 / 单表 DDL（`rules`/`logger`/`prefs`/`subscriptions`/`health`/`heartbeats`/`devices`/`meta`） |
 
 响应约定：`/api/logger`、`/api/subscribe` 下的只读接口带 `Cache-Control: public, max-age=30`
@@ -330,7 +338,52 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 > `final`（Git 集成创建时默认用仓库名），手动部署请用上表的 wrangler 命令带上真实项目名，
 > 否则会部署到另一个项目。
 
-## 版本与更新、设备检测与多数据库工厂
+## 版本与更新、设备检测、AI 分流自动化与多数据库工厂
+
+### AI 配置导航：Cloudflare Workers AI 自动分流（v1.3.0）
+
+「🤖 AI配置」页在原有「提示词 + 匹配值复制」之上，正式接入 **Cloudflare Workers AI**，
+实现规则库的全自动智能分流与注释补全闭环（`/api/ai`，实现位于 `functions/api/_ai/`）：
+
+- **连接与模型识别**：填入 Cloudflare Account ID + Workers AI API Token，
+  「🔄 拉取模型列表」动态获取账号下可用的文本生成模型（默认
+  `@cf/meta/llama-3.1-8b-instruct`），「🧪 测试连接」跑一条最小推理验证连通。
+  Token 只存服务端（偏好表保留用户 `system`，通用 prefs 接口拒绝读写该用户），
+  面板回显仅掩码（`••••` + 末 4 位），原文永不下发；
+- **智能过滤与优先级调度**：候选 = 「未分流」（策略仍是捕获默认 PROXY）或
+  「无注释」（备注为空）且未被处理过的规则；带 ✏️ 标记的规则（快速编辑保存过，
+  规则表策略列有徽标）排到队列最前优先处理，且 **AI 不改写其手工策略**、
+  只补全空注释——手动调整的结果永远优先；
+- **定时与限流**：执行周期（30 分钟 ~ 每天 / 自定义分钟）、单次查询数量（1~100）、
+  条间调用间隔（毫秒）均可配，全局开关一键暂停；处理过的规则打 `ai_processed`
+  标记防止重复分析，「♻️ 重置处理标记」可全量重跑；
+- **自动化闭环**：AI 输出严格 JSON（`{"policy":"PROXY|DIRECT|REJECT","comment":"…"}`），
+  解析失败 / 策略非法的条目计失败并跳过写库，连续 3 次传输失败自动中止本轮、
+  剩余留给下一轮；结果直接回写规则表，实现自动归类 + 注释补全 + 分流，免人工干预；
+- **双通道调度**：① 前端调度器——面板打开期间每分钟检查周期到期即自动消化队列；
+  ② 外部触发——Cloudflare Pages 无原生 cron，7×24 无人值守用任意外部定时器按周期
+  请求 `POST /api/ai/run?token=写接口令牌`（也接受 `Authorization: Bearer` 头）。
+  端点内置冷却 + 单飞守卫（running 标记 15 分钟过期自动恢复），两通道并存不会重复执行。
+
+外部定时器示例（任选其一，周期与面板「执行周期」一致即可）：
+
+```bash
+# cron-job.org：URL 填 https://<你的域名>/api/ai/run?token=<写接口令牌>，方法 POST
+# NAS / 服务器 crontab（每 6 小时）：
+0 */6 * * * curl -fsS -X POST "https://<你的域名>/api/ai/run?token=<写接口令牌>"
+```
+
+```js
+// Cloudflare Worker cron trigger（每 6 小时，免第三方服务）：
+export default {
+  scheduled: async (_event, env) => {
+    await fetch(`https://<你的域名>/api/ai/run?token=${env.PANEL_TOKEN}`, { method: 'POST' });
+  }
+};
+```
+
+数据库 schema v3：`surge_logs` 新增 `manual_edited`（✏️ 标记）与 `ai_processed`
+（AI 已处理标记）两列，首次访问任意接口自动迁移，无需手工建表。
 
 ### 多设备状态检测与设备检测综合视图（v1.2.0）
 

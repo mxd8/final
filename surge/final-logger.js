@@ -33,7 +33,7 @@
  */
 
 /** 脚本版本：随仓库发版注入（scripts/inject-version.mjs），与响应捎带的 latestLoggerVersion 比对 */
-var SCRIPT_VERSION = "1.2.0";
+var SCRIPT_VERSION = "1.3.0";
 var CONFIG_KEY = "final_db_config";
 /** 版本自报键：上报响应捎带 latestLoggerVersion 时写入，面板读取后展示升级提示 */
 var LOGGER_META_KEY = "final_logger_meta";

@@ -148,7 +148,7 @@ export function refreshCopyCount() {
 const CELL_RENDERERS = {
     type: (item) => `<td data-col="type"><span class="badge text-bg-secondary">${cpEscape(item.type || 'DOMAIN-SUFFIX')}</span></td>`,
     value: (item) => `<td data-col="value" class="cp-mono">${cpEscape(item.value || item.hostname)}</td>`,
-    policy: (item) => `<td data-col="policy">${policyBadge(item.policy)}</td>`,
+    policy: (item) => `<td data-col="policy">${policyBadge(item.policy)}${Number(item.manual_edited) ? ' <span title="✏️ 快速编辑过：手动调整的策略，AI 不会改写">✏️</span>' : ''}</td>`,
     params: (item) => `<td data-col="params" class="cp-col-params">${paramBadges(item.params) || '<span class="text-muted">—</span>'}</td>`,
     comment: (item) => `<td data-col="comment" class="cp-mono small">${cpEscape(item.comment || '')}</td>`,
     source: (item) => `<td data-col="source" class="cp-col-source">${item.source ? `📱 ${cpEscape(item.source)}` : '<span class="text-muted">—</span>'}</td>`,
