@@ -8,7 +8,8 @@
  */
 
 import { resolveAdapter } from '../_utils/db/factory.js';
-import { requireWriteToken } from '../_utils/auth.js';
+import { requireMutationAuth } from '../_utils/auth/principal.js';
+import { requireFeature } from '../_utils/auth/policy.js';
 import {
   jsonResponse,
   textResponse,
@@ -84,8 +85,10 @@ async function exportSubscription(config) {
 }
 
 async function createRule(context, config) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const auth = await requireMutationAuth(context.env, config, context.request, context);
+  if (!auth.ok) return auth.response;
+  const featureDenied = await requireFeature(auth.principal, 'logs.write');
+  if (featureDenied) return featureDenied;
 
   const parsed = await readJson(context);
   if (!parsed.ok) return badRequest('请求体不是有效的 JSON');
@@ -117,8 +120,10 @@ function handleRuleItem(context, config, path, method) {
 
 /** 非读取操作先鉴权，再按方法分发（未支持的方法同样先过鉴权） */
 async function writeRuleItem(context, config, id, method) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const auth = await requireMutationAuth(context.env, config, context.request, context);
+  if (!auth.ok) return auth.response;
+  const featureDenied = await requireFeature(auth.principal, 'logs.write');
+  if (featureDenied) return featureDenied;
 
   if (method === 'PUT') return updateRule(context, config, id);
   if (method === 'DELETE') return removeRule(config, id);

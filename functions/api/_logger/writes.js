@@ -5,7 +5,8 @@
  */
 
 import { jsonResponse, readJson, badRequest, notFound } from '../../_utils/http.js';
-import { requireWriteToken, requireHitToken, extractUrlOrHeaderToken } from '../../_utils/auth.js';
+import { requireMutationAuth, requireReportAuth } from '../../_utils/auth/principal.js';
+import { requireFeature } from '../../_utils/auth/policy.js';
 import {
   recordHit,
   recordHits,
@@ -21,21 +22,32 @@ import {
 import { NO_CACHE } from './constants.js';
 import { COMPONENT_VERSIONS } from '../../_utils/build-meta.js';
 import { clientIp, parseDeviceHeaders, touchDevice, buildDeviceId } from '../../_utils/devices.js';
+import { resolveDeviceType, collectPlatformParams, DEVICE_TYPE } from '../../_utils/device-profiles.js';
 import { normalizeUsername, normalizeIp } from '../../_utils/logs/normalize.js';
 
 /**
  * 从批量上报请求解析设备上下文：来源 IP 由服务端从连接捕获（Surge 端拿不到
  * 自己的公网出口 IP），用户名 / 设备标识 / 版本自报走请求头，username 字段兜底。
+ * v4：设备五类型 profile——deviceType 由请求体 / 平台头 / 型号推断解析，
+ * 平台专属参数（系统版本 / Surge 版本 / 插件版本）随触达快照入库。
+ * E（纯 API / 无设备）：没有任何设备上下文时按来源 IP 生成稳定标识注册设备行
+ * （一次性 CRUD 提交单条记录，不参与版本检测）。
  */
 function deviceContextFromRequest(request, body) {
   const device = parseDeviceHeaders(request);
   const fallbackUsername = normalizeUsername(body?.username);
+  const deviceType = resolveDeviceType(request, body);
+  const ip = clientIp(request);
+  const clientId = device.clientId
+    || (deviceType === DEVICE_TYPE.API_CLIENT && ip ? `api-${ip}` : '');
   return {
-    clientId: device.clientId,
+    clientId,
     name: device.name,
     username: device.username || fallbackUsername,
-    ip: clientIp(request),
-    loggerVersion: device.loggerVersion
+    ip,
+    loggerVersion: device.loggerVersion,
+    deviceType,
+    platformParams: collectPlatformParams(request, body, deviceType)
   };
 }
 
@@ -51,10 +63,11 @@ async function touchDeviceSafely(db, context) {
   }
 }
 
-/** 上报接口：任一已配置令牌（PANEL_WRITE_TOKEN / PANEL_HIT_TOKEN）匹配即放行 */
+/** 上报接口：任一已配置令牌（PANEL_WRITE_TOKEN / PANEL_HIT_TOKEN）或会话用户放行；
+ *  鉴权体系启用后匿名上报一律 401（禁止匿名添加数据）。 */
 export async function handleHit(context, config) {
-  const hitDenied = requireHitToken(context.env, extractUrlOrHeaderToken(context));
-  if (hitDenied) return hitDenied;
+  const reportAuth = await requireReportAuth(context.env, config, context);
+  if (!reportAuth.ok) return reportAuth.response;
 
   const body = await readJson(context);
   if (!body.ok) return badRequest('请求体不是有效的 JSON');
@@ -82,12 +95,12 @@ export async function handleHit(context, config) {
 /**
  * 批量上报入口：{hits: [{hostname, count?, type?, value?, source?, policy?, params?, ip?, username?}]}。
  * 捕获脚本的本地去重窗口攒满一批后一次提交，服务端一个批量事务落库；
- * 令牌校验与单条 /hit 完全一致。设备上下文（IP / 用户名 / 标识）对整批生效，
+ * 令牌校验与单条 /hit 完全一致。设备上下文（IP / 用户名 / 标识 / 平台参数）对整批生效，
  * 单条命中里的同名字段优先。
  */
 export async function handleHitBatch(context, config) {
-  const hitDenied = requireHitToken(context.env, extractUrlOrHeaderToken(context));
-  if (hitDenied) return hitDenied;
+  const reportAuth = await requireReportAuth(context.env, config, context);
+  if (!reportAuth.ok) return reportAuth.response;
 
   const body = await readJson(context);
   if (!body.ok) return badRequest('请求体不是有效的 JSON');
@@ -109,10 +122,13 @@ export async function handleHitBatch(context, config) {
   return jsonResponse({ success: true, data: { ...result, latestLoggerVersion: COMPONENT_VERSIONS.logger } }, { headers: NO_CACHE });
 }
 
-/** 其余写接口的统一鉴权入口 + 分发；是否读请求体由各处理器自定（clear-empty 无 body） */
+/** 其余写接口的统一鉴权入口 + 分发；是否读请求体由各处理器自定（clear-empty 无 body）。
+ *  鉴权体系启用后匿名一律 401；登录用户再过 logs.write 功能限制（预留 AI 检测接入）。 */
 export async function handleWrite(context, config, path) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const auth = await requireMutationAuth(context.env, config, context.request, context);
+  if (!auth.ok) return auth.response;
+  const featureDenied = await requireFeature(auth.principal, 'logs.write', { path });
+  if (featureDenied) return featureDenied;
 
   switch (path) {
     case '/api/logger/update':

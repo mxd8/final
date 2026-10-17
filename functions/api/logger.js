@@ -24,7 +24,7 @@ function dispatchGet(context, config, url, path) {
   if (path === '/api/logger/export') return handleExport(context, config, url);
   if (path === '/api/logger/export-summary') return handleExportSummary(context, config, url);
   if (path === '/api/logger/schema') return handleSchema();
-  if (path === '/api/logger/meta') return handleMeta(context);
+  if (path === '/api/logger/meta') return handleMeta(context, config);
   if (WRITE_PATHS.has(path)) return methodNotAllowed('GET', 'POST');
   return notFound(`未知的接口：${path}`);
 }

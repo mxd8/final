@@ -5,7 +5,7 @@
 
 import { state, CP_CONFIG } from './config.js';
 import { $ } from './dom.js';
-import { wireNav, switchPage } from './nav.js';
+import { wireNav, switchPage, refreshNav } from './nav.js';
 import { cpSetBusy } from './notify.js';
 import { loadPrefs, savePref, keys } from './prefs-store.js';
 import { populateTypeFilterSelect, renderLogList, setColumnVisible, renderColumnMenu } from './render.js';
@@ -20,7 +20,9 @@ import { applyPreferences, setTheme, toggleTheme, savePrompt, saveOnlyEmptyPref,
 import { aiSaveConnection, aiSaveSchedule, aiLoadModels, aiTestConnection, aiRefreshStatus, aiRunNow, aiResetProcessed, startAiScheduler } from './ai.js';
 import { wireUsageCard } from './usage.js';
 import { initVersionCheck } from './version-check.js';
-import { initHealthView, runHealthChecksBasic, runDeepConfirmed, copyHealthReport } from './health.js';
+import { initHealthView, runHealthChecksBasic, runDeepConfirmed, copyHealthReport, populateHealthScope } from './health.js';
+import { initAuth, logout, changePassword } from './auth.js';
+import { initUsersView } from './users.js';
 import { setExportType, setMinCount, applyCustomMinCount, clearMinCount, setLastDays, onExportOptionChange, copyExportLink, copyPageDomains, restoreExportFilters, refreshExportSummary } from './export.js';
 
 function onSearchInput() {
@@ -171,6 +173,11 @@ function initCapturedPanel() {
     startAiScheduler();
     // Cloudflare 用量卡：底部引导链接（未配置时跳 AI 配置页）
     wireUsageCard();
+    // 多用户体系：会话初始化（顶栏徽标 / 登录弹窗）与用户管理页装配；
+    // 身份变化后重算导航可见性（用户页仅管理员可见），统计刷新后同步检测隔离下拉框
+    initUsersView();
+    document.addEventListener('cp:auth', () => refreshNav());
+    initAuth();
     // 进入设备检测综合视图时用已加载的 stats 数据即时渲染设备面板（刷新后由 doRefreshAll 再刷新）
     document.addEventListener('cp:page', (event) => {
         if (event.detail === 'devices') renderDevicePanel();
@@ -227,7 +234,9 @@ window.capturePanel = {
     aiResetProcessed,
     runHealthChecks: runHealthChecksBasic,
     confirmDeepHealth: runDeepConfirmed,
-    copyHealthReport
+    copyHealthReport,
+    logout,
+    changePassword
 };
 
 if (document.readyState === 'loading') {

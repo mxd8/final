@@ -22,7 +22,8 @@
  */
 
 import { resolveAdapter } from '../_utils/db/factory.js';
-import { requireWriteToken, requireUrlOrHeaderWriteToken, warningHeadersIfOpen } from '../_utils/auth.js';
+import { requireMutationAuth } from '../_utils/auth/principal.js';
+import { requireFeature } from '../_utils/auth/policy.js';
 import { jsonResponse, readJson, badRequest, notFound, methodNotAllowed, errorResponse } from '../_utils/http.js';
 import { loadAiConfig, saveAiConfig, publicAiConfig, loadAiState } from './_ai/config.js';
 import { listTextModels, testConnection } from './_ai/client.js';
@@ -31,6 +32,15 @@ import { runAiBatch } from './_ai/executor.js';
 import { getCfUsage } from './_ai/usage.js';
 
 const TAG = 'api/ai';
+
+/** 写接口统一鉴权（会话 / 管理令牌 / ?token= 查询参数，鉴权启用后匿名拒绝）+ 功能限制 */
+async function guardAi(context, db, feature) {
+  const auth = await requireMutationAuth(context.env, db, context.request, context);
+  if (!auth.ok) return { denied: auth.response };
+  const featureDenied = await requireFeature(auth.principal, feature, { path: new URL(context.request.url).pathname });
+  if (featureDenied) return { denied: featureDenied };
+  return { principal: auth.principal };
+}
 
 export async function onRequest(context) {
   const { adapter: db, response } = await resolveAdapter(context.env);
@@ -60,15 +70,12 @@ export async function onRequest(context) {
 
 async function getConfig(context, db) {
   const config = await loadAiConfig(db);
-  return jsonResponse(
-    { success: true, data: publicAiConfig(config) },
-    { headers: warningHeadersIfOpen(context.env) }
-  );
+  return jsonResponse({ success: true, data: publicAiConfig(config) });
 }
 
 async function saveConfig(context, db) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const guard = await guardAi(context, db, 'ai.config');
+  if (guard.denied) return guard.denied;
 
   const body = await readJson(context);
   if (!body.ok) return badRequest('请求体不是有效的 JSON');
@@ -78,8 +85,8 @@ async function saveConfig(context, db) {
 }
 
 async function getModels(context, db) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const guard = await guardAi(context, db, 'ai.config');
+  if (guard.denied) return guard.denied;
 
   const config = await loadAiConfig(db);
   const models = await listTextModels(config);
@@ -87,8 +94,8 @@ async function getModels(context, db) {
 }
 
 async function test(context, db) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const guard = await guardAi(context, db, 'ai.config');
+  if (guard.denied) return guard.denied;
 
   const config = await loadAiConfig(db);
   const result = await testConnection(config);
@@ -121,33 +128,34 @@ async function status(context, db) {
         nextRunAt
       }
     },
-    { headers: warningHeadersIfOpen(context.env) }
+    { headers: { 'Cache-Control': 'no-store' } }
   );
 }
 
 /**
  * Cloudflare 用量：匿名可读（仅聚合数字，不含凭据），服务端 60 秒缓存兜底；
- * ?force=1 跳过缓存属于主动打上游 GraphQL，要求写令牌。
+ * ?force=1 跳过缓存属于主动打上游 GraphQL，要求鉴权。
  */
 async function usage(context, db, url) {
   const force = url.searchParams.get('force') === '1';
   if (force) {
-    const writeDenied = requireWriteToken(context.env, context.request);
-    if (writeDenied) return writeDenied;
+    const guard = await guardAi(context, db, 'ai.config');
+    if (guard.denied) return guard.denied;
   }
 
   const config = await loadAiConfig(db);
   const data = await getCfUsage(config, { force });
   return jsonResponse(
     { success: true, data },
-    { headers: { 'Cache-Control': 'no-store', ...warningHeadersIfOpen(context.env) } }
+    { headers: { 'Cache-Control': 'no-store' } }
   );
 }
 
 async function run(context, db, url) {
-  // 外部定时器不便带请求头：写令牌额外接受 ?token= 查询参数（同 /hit 的兼容策略）
-  const writeDenied = requireUrlOrHeaderWriteToken(context.env, context);
-  if (writeDenied) return writeDenied;
+  // 外部定时器不便带请求头：令牌额外接受 ?token= 查询参数（同 /hit 的兼容策略）；
+  // 登录用户再过 ai.run 功能限制（预留 AI 检测 / 动态策略接入）
+  const guard = await guardAi(context, db, 'ai.run');
+  if (guard.denied) return guard.denied;
 
   const config = await loadAiConfig(db);
   const body = await readJson(context);
@@ -158,8 +166,8 @@ async function run(context, db, url) {
 }
 
 async function reset(context, db) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const guard = await guardAi(context, db, 'ai.config');
+  if (guard.denied) return guard.denied;
 
   const data = await resetProcessed(db);
   return jsonResponse({ success: true, data });

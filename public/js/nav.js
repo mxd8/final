@@ -13,10 +13,16 @@ import { savePref, keys } from './prefs-store.js';
 export const PAGES = [
     { id: 'home', icon: '🏠', label: '首页' },
     { id: 'data', icon: '🗂️', label: '数据' },
+    { id: 'users', icon: '👥', label: '用户' },
     { id: 'ai', icon: '🤖', label: 'AI配置' },
     { id: 'settings', icon: '⚙️', label: '设置' },
     { id: 'devices', icon: '📱', label: '设备检测', hidden: true }
 ];
+
+/** 用户页可见性：鉴权体系未启用（展示初始化引导）或当前身份具备管理权限 */
+function usersPageVisible() {
+    return !state.authEnabled || state.isAdmin;
+}
 
 const getPageId = (page) => `cpPage-${page.id}`;
 
@@ -34,12 +40,17 @@ function renderNav() {
         console.error('PAGES array is empty or undefined');
         return;
     }
-    const html = PAGES.filter((page) => !page.hidden).map(navItemHtml).join('');
+    const html = PAGES.filter((page) => !page.hidden && (page.id !== 'users' || usersPageVisible())).map(navItemHtml).join('');
     for (const nav of [$('cpNavTop'), $('cpNavBottom')]) {
         if (nav) nav.innerHTML = html;
     }
     syncNavActive();
     syncNavPosition();
+}
+
+/** 身份变化后重算导航可见性（auth.js 广播 cp:auth 后调用） */
+export function refreshNav() {
+    renderNav();
 }
 
 function syncNavActive() {

@@ -1,8 +1,8 @@
 /**
  * 用户偏好 API：/api/prefs
  * user 是前端生成的设备标识（非账号）。偏好本身不敏感，但 gist.token 也存这张表，
- * 所以配置了 PANEL_WRITE_TOKEN 时读 / 写 / 删除全部要求令牌（前端偏好请求自动附带）；
- * 未配置时保持开放（兼容已上线部署），响应附带开放状态警告头。
+ * 所以读 / 写 / 删除全部要求鉴权（会话用户或写令牌，前端请求自动附带）；
+ * 鉴权体系未启用且未配置写令牌时保持开放（兼容已上线部署）。
  *
  *   GET    /api/prefs?user=<设备标识>            取该设备全部偏好
  *   GET    /api/prefs/schema                     建表语句
@@ -11,7 +11,7 @@
  */
 
 import { resolveAdapter } from '../_utils/db/factory.js';
-import { requireWriteToken, warningHeadersIfOpen } from '../_utils/auth.js';
+import { requireMutationAuth } from '../_utils/auth/principal.js';
 import { jsonResponse, readJson, textResponse, badRequest, notFound, methodNotAllowed, errorResponse } from '../_utils/http.js';
 import {
   PREFS_SCHEMA,
@@ -58,22 +58,29 @@ export async function onRequest(context) {
   }
 }
 
+/** 偏好接口统一鉴权：会话用户或令牌；gist.token 与普通偏好同表，匿名读取等于暴露凭据 */
+async function guardPrefs(context, config) {
+  const auth = await requireMutationAuth(context.env, config, context.request, context);
+  if (!auth.ok) return { denied: auth.response };
+  return { principal: auth.principal };
+}
+
 async function list(context, config, url) {
-  // gist.token 存在偏好表里：配置了写令牌时读取同样要过鉴权，避免匿名取回凭据
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  // gist.token 存在偏好表里：读取同样要过鉴权，避免匿名取回凭据
+  const guard = await guardPrefs(context, config);
+  if (guard.denied) return guard.denied;
 
   const user = normalizeUserId(url.searchParams.get('user'));
   const reserved = guardReservedUser(user);
   if (reserved) return reserved;
 
   const settings = await listPrefs(config, user);
-  return jsonResponse({ success: true, user, data: settings }, { headers: warningHeadersIfOpen(context.env) });
+  return jsonResponse({ success: true, user, data: settings });
 }
 
 async function save(context, config) {
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  const guard = await guardPrefs(context, config);
+  if (guard.denied) return guard.denied;
 
   const body = await readJson(context);
   if (!body.ok) return badRequest('请求体不是有效的 JSON');
@@ -92,9 +99,9 @@ async function save(context, config) {
 }
 
 async function remove(context, config, url) {
-  // 匿名可清空任意 user 的偏好是不可接受的：删除与保存同样先过写令牌
-  const writeDenied = requireWriteToken(context.env, context.request);
-  if (writeDenied) return writeDenied;
+  // 匿名可清空任意 user 的偏好是不可接受的：删除与保存同样先过鉴权
+  const guard = await guardPrefs(context, config);
+  if (guard.denied) return guard.denied;
 
   const user = normalizeUserId(url.searchParams.get('user'));
   const reserved = guardReservedUser(user);

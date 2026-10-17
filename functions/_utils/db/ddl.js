@@ -14,12 +14,15 @@
 
 import { asDbError } from './contract.js';
 
-export const DB_SCHEMA_VERSION = 3;
+export const DB_SCHEMA_VERSION = 4;
 
 export const DB_META_TABLE = 'db_meta';
 export const HEALTH_PROBE_TABLE = 'health_probe';
 export const HEARTBEATS_TABLE = 'client_heartbeats';
 export const DEVICES_TABLE = 'devices';
+export const USERS_TABLE = 'users';
+export const USER_GROUPS_TABLE = 'user_groups';
+export const AUTH_SESSIONS_TABLE = 'auth_sessions';
 
 /**
  * 建表 DDL 按单条语句拆分：Turso HTTP 管道每条语句单独执行，
@@ -67,12 +70,76 @@ const DEVICES_TABLE_DDL = `CREATE TABLE IF NOT EXISTS ${DEVICES_TABLE} (
   refresh_seconds INTEGER NOT NULL DEFAULT 0,
   last_online_time TEXT NOT NULL DEFAULT '',
   first_seen TEXT NOT NULL DEFAULT '',
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  device_type TEXT NOT NULL DEFAULT '',
+  platform_params TEXT NOT NULL DEFAULT ''
 );`.trim();
 
 const DEVICES_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_${DEVICES_TABLE}_online ON ${DEVICES_TABLE}(last_online_time);`.trim();
 
 export const DEVICES_SCHEMA = `${DEVICES_TABLE_DDL}\n${DEVICES_INDEX_DDL}`;
+
+/**
+ * users / user_groups / auth_sessions：多用户与权限体系（v4 新增）。
+ *   - users：账号密码用户（PBKDF2 哈希），role = admin | user，status = active | disabled；
+ *     permissions 存 JSON（{features: {...}} 功能级限制，用户值覆盖用户组值）。
+ *   - user_groups：用户组，组级 permissions JSON，用户可归属一组。
+ *   - auth_sessions：面板登录会话（token 只存 SHA-256 哈希，原文仅下发一次）。
+ */
+const USER_GROUPS_TABLE_DDL = `CREATE TABLE IF NOT EXISTS ${USER_GROUPS_TABLE} (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  permissions TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);`.trim();
+
+const USERS_TABLE_DDL = `CREATE TABLE IF NOT EXISTS ${USERS_TABLE} (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',
+  group_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',
+  permissions TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_login_at TEXT NOT NULL DEFAULT ''
+);`.trim();
+
+const AUTH_SESSIONS_TABLE_DDL = `CREATE TABLE IF NOT EXISTS ${AUTH_SESSIONS_TABLE} (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  user_agent TEXT NOT NULL DEFAULT ''
+);`.trim();
+
+/** 索引逐条语句（BASE_DDL / MIGRATION_STEPS 每项必须是单条 SQL，Turso 管道同约束） */
+const AUTH_INDEX_STATEMENTS = [
+  `CREATE INDEX IF NOT EXISTS idx_${AUTH_SESSIONS_TABLE}_user ON ${AUTH_SESSIONS_TABLE}(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_${AUTH_SESSIONS_TABLE}_expires ON ${AUTH_SESSIONS_TABLE}(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_${USERS_TABLE}_group ON ${USERS_TABLE}(group_id)`
+];
+
+/** 展示用拼接版（/api/schema 与 sql/schema.sql） */
+export const AUTH_SCHEMA = [
+  USER_GROUPS_TABLE_DDL,
+  USERS_TABLE_DDL,
+  AUTH_SESSIONS_TABLE_DDL,
+  ...AUTH_INDEX_STATEMENTS
+].join('\n');
+
+/** devices 表 v4 增量列：来源设备类型（surge-ios / surge-mac / surge-ipad / router-plugin / api-client）与平台专属参数快照 */
+const DEVICES_TYPE_COLUMN_DDL = [
+  `ALTER TABLE ${DEVICES_TABLE} ADD COLUMN device_type TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE ${DEVICES_TABLE} ADD COLUMN platform_params TEXT NOT NULL DEFAULT ''`
+];
+
+const DEVICES_TYPE_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_${DEVICES_TABLE}_type ON ${DEVICES_TABLE}(device_type);`.trim();
 
 export const DB_META_SCHEMA = `CREATE TABLE IF NOT EXISTS ${DB_META_TABLE} (
   key TEXT PRIMARY KEY,
@@ -138,7 +205,12 @@ export const BASE_DDL = [
   HEARTBEATS_TABLE_DDL,
   HEARTBEATS_INDEX_DDL,
   DEVICES_TABLE_DDL,
-  DEVICES_INDEX_DDL
+  DEVICES_INDEX_DDL,
+  DEVICES_TYPE_INDEX_DDL,
+  USER_GROUPS_TABLE_DDL,
+  USERS_TABLE_DDL,
+  AUTH_SESSIONS_TABLE_DDL,
+  ...AUTH_INDEX_STATEMENTS
 ];
 
 /**
@@ -159,6 +231,17 @@ export const MIGRATION_STEPS = {
     // ai_processed = AI 已处理过（防止自动化每轮重复分析同一条规则）
     `ALTER TABLE surge_logs ADD COLUMN manual_edited INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE surge_logs ADD COLUMN ai_processed INTEGER NOT NULL DEFAULT 0`
+  ],
+  4: [
+    // v4：多用户权限体系三表 + 设备类型多维度列（设备五类型 profile 适配）。
+    // devices 的 device_type / platform_params 用 ALTER 补列：v3 旧库的 devices 表
+    // 由 DEVICES_TABLE_DDL（v4 起含新列）CREATE IF NOT EXISTS 建的，列不存在必须补。
+    ...DEVICES_TYPE_COLUMN_DDL,
+    DEVICES_TYPE_INDEX_DDL,
+    USER_GROUPS_TABLE_DDL,
+    USERS_TABLE_DDL,
+    AUTH_SESSIONS_TABLE_DDL,
+    ...AUTH_INDEX_STATEMENTS
   ]
 };
 

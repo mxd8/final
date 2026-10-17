@@ -142,5 +142,13 @@ export const state = {
      * 规则表隐藏列集合（列 key 见 render.js 的 TABLE_COLUMNS）。
      * 状态持久化到数据库（prefs-store 防抖合并写入），空集合 = 全部显示。
      */
-    hiddenColumns: new Set()
+    hiddenColumns: new Set(),
+    /** 多用户鉴权体系状态（/api/auth/me）：enabled = 已初始化管理员 */
+    authEnabled: false,
+    /** 当前会话用户（会话登录后由 /api/auth/me 回填；null = 匿名 / 令牌身份） */
+    user: null,
+    /** 当前身份是否具备管理权限（admin 会话或管理令牌） */
+    isAdmin: false,
+    /** 功能限制清单（feature → 说明），/api/auth/me 下发 */
+    authFeatures: null
 };

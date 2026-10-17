@@ -33,7 +33,7 @@
  */
 
 /** 脚本版本：随仓库发版注入（scripts/inject-version.mjs），与响应捎带的 latestLoggerVersion 比对 */
-var SCRIPT_VERSION = "1.4.0";
+var SCRIPT_VERSION = "1.5.0";
 var CONFIG_KEY = "final_db_config";
 /** 版本自报键：上报响应捎带 latestLoggerVersion 时写入，面板读取后展示升级提示 */
 var LOGGER_META_KEY = "final_logger_meta";
@@ -82,6 +82,29 @@ function deviceSource() {
             return trim($environment["device-model"]);
         }
     } catch (e) {}
+    return "";
+}
+
+/** 设备五类型适配（v1.5）：平台 key 供服务端按 profile 定制检测项。
+  * system 串（iOS / iPadOS / macOS）优先，设备型号推断兜底；识别不出留空。 */
+function environmentValue(key) {
+    try {
+        if (typeof $environment !== "undefined" && $environment) {
+            return trim($environment[key]);
+        }
+    } catch (error) {}
+    return "";
+}
+
+function platformKey() {
+    var system = environmentValue("system").toLowerCase();
+    if (system.indexOf("ipados") === 0) return "surge-ipad";
+    if (system.indexOf("ios") === 0) return "surge-ios";
+    if (system.indexOf("macos") === 0 || system.indexOf("os x") === 0) return "surge-mac";
+    var model = deviceSource().toLowerCase();
+    if (model.indexOf("ipad") > -1) return "surge-ipad";
+    if (model.indexOf("iphone") > -1) return "surge-ios";
+    if (model.indexOf("mac") > -1) return "surge-mac";
     return "";
 }
 
@@ -202,13 +225,23 @@ function flushHits(endpoint, authToken, entries, device) {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + authToken,
         // 设备上下文随请求头捎带：clientId 复用面板下发的标识（同设备两脚本一致），
-        // 来源 IP 由服务端从请求连接捕获，设备注册表据此维护在线状态与配置告警
+        // 来源 IP 由服务端从请求连接捕获，设备注册表据此维护在线状态与配置告警；
+        // 平台专属参数（设备类型 / 系统版本 / Surge 版本）供服务端按 profile 适配检测
         "X-Final-Client": device.clientId || "",
         "X-Final-Device": device.name || "",
         "X-Final-User": device.username || "",
-        "X-Final-Logger": SCRIPT_VERSION
+        "X-Final-Logger": SCRIPT_VERSION,
+        "X-Final-Platform": device.platform || "",
+        "X-Final-System": device.systemVersion || "",
+        "X-Final-Surge-Version": device.surgeVersion || ""
     };
-    var body = JSON.stringify({ hits: hits, username: device.username || "" });
+    var body = JSON.stringify({
+        hits: hits,
+        username: device.username || "",
+        deviceType: device.platform || "",
+        systemVersion: device.systemVersion || "",
+        surgeVersion: device.surgeVersion || ""
+    });
 
     try {
         // 官方 HTTP 客户端是 $httpClient，回调签名 (error, response, data)，状态码在 response.status
@@ -250,11 +283,15 @@ function main() {
     var username = (stored && trim(stored.username)) || args[3] || "";
     var sourceName = deviceSource() || "Unknown";
     // 设备上下文：clientId 复用面板写入持久化的标识（两脚本同设备同标识），
-    // 用户名来自模块参数 FINAL_USER（经面板下发），型号取 $environment
+    // 用户名来自模块参数 FINAL_USER（经面板下发），型号取 $environment；
+    // v1.5 平台专属参数：设备类型 / 系统版本 / Surge 版本随上报带给服务端
     var device = {
         clientId: (stored && trim(stored.clientId)) || "",
         name: sourceName,
-        username: username
+        username: username,
+        platform: platformKey(),
+        systemVersion: environmentValue("system"),
+        surgeVersion: environmentValue("surge-version")
     };
 
     if (!rawUrl) {

@@ -1,6 +1,6 @@
 # Surge 规则管理器
 
-基于 **Cloudflare Pages + Turso (libSQL)** 的 Surge 规则管理面板：FINAL 命中采集、订阅解析导入、多设备来源追踪、命中过滤导出与订阅直链、Workers AI 自动分流与 Cloudflare 用量仪表盘。
+基于 **Cloudflare Pages + Turso (libSQL)** 的 Surge 规则管理面板：FINAL 命中采集、订阅解析导入、多设备来源追踪、命中过滤导出与订阅直链、Workers AI 自动分流、Cloudflare 用量仪表盘，以及多用户权限体系、来源设备五类型适配与分类健康诊断（v1.5.0）。
 
 - **后端**：Cloudflare Pages Functions（纯 JS + ESM），通过 HTTPS 远程 API 访问 Turso，不使用 ORM
 - **前端**：无框架原生 JavaScript ES Module + Bootstrap 5.3 CDN
@@ -124,27 +124,33 @@ api/*.js（薄分发）
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | GET | `/api/logger` | 匿名 | 规则列表（`?search=&policy=&type=&limit=`，默认 5000、上限 50000，按最近命中倒序）；行含 `ip` / `username` 来源字段 |
-| GET | `/api/logger/stats` | 匿名 | 统计（`?tz=` 设备本地时区偏移，分钟）；带 `x-final-client` 心跳头 + 上报令牌时记录客户端心跳与设备登记，响应捎带 `latest` 组件版本、最近心跳清单与 `devices` / `deviceSummary` 设备报表（在线 n/m + 分级告警） |
+| GET | `/api/logger/stats` | 匿名 | 统计（`?tz=` 设备本地时区偏移，分钟）；带 `x-final-client` 心跳头 + 上报令牌时记录客户端心跳与设备登记，响应捎带 `latest` 组件版本、最近心跳清单与 `devices` / `deviceSummary` 设备报表（在线 n/m + 分级告警）；`?device-type=` / `?username=` 按设备类型 / 用户隔离设备报表 |
 | GET | `/api/logger/export` | 匿名 | 订阅文本（`?type=&source=&with-source=&min-count=&last-days=&meta=1`） |
 | GET | `/api/logger/export-summary` | 匿名 | 导出前核对摘要（与 `/export` 同一套过滤，含 `last-days`） |
-| GET | `/api/logger/schema` · `/meta` | 匿名 | surge_logs 建表 DDL / 规则类型·参数·策略常量（含 `writeAuthRequired`）；`/meta` 另带 `version` 版本清单（serverVersion / components / dbSchemaVersion），no-store，是版本比对的唯一基准 |
+| GET | `/api/logger/schema` · `/meta` | 匿名 | surge_logs 建表 DDL / 规则类型·参数·策略常量（含 `writeAuthRequired`）；`/meta` 另带 `version` 版本清单（serverVersion / components / dbSchemaVersion）、`auth` 鉴权体系状态、`deviceTypes` 五类型 profile 与 `distribution` 分发通道，no-store，是版本比对的唯一基准 |
 | GET | `/api/export[/...]` | 匿名 | 固定订阅导出：`?policy=all\|proxy\|direct\|reject`，筛选读偏好表 `user=export`，显式查询参数优先 |
-| POST | `/api/logger/hit` | 上报令牌（必配） | Surge 命中上报（`?token=` 或 Bearer 头），扁平体 `{hostname,type,value,source,policy,params}`；`ip` 由服务端从连接捕获、`username` 可选携带 |
-| POST | `/api/logger/hits` | 上报令牌（必配） | Surge 批量上报：`{hits:[{hostname,count?,...}], username?}`，同主机名合并次数、单次上限 200，捕获脚本去重窗口的入口；设备上下文（X-Final-Client/Device/User/Logger 头）随请求登记进 devices 注册表 |
-| POST | `/api/logger/update·delete·exclude·batch·clear·clear-empty` | 写令牌 | 面板写操作；`clear` 另需 `{"confirm":true}` |
+| POST | `/api/logger/hit` | 上报令牌 / 会话（必配） | Surge 命中上报（`?token=` 或 Bearer 头），扁平体 `{hostname,type,value,source,policy,params,deviceType?,pluginVersion?}`；`ip` 由服务端从连接捕获、`username` 可选携带；设备五类型 profile 随请求解析入库 |
+| POST | `/api/logger/hits` | 上报令牌 / 会话（必配） | Surge 批量上报：`{hits:[{hostname,count?,...}], username?, deviceType?, systemVersion?, surgeVersion?}`，同主机名合并次数、单次上限 200，捕获脚本去重窗口的入口；设备上下文（X-Final-Client/Device/User/Platform 等头）随请求登记进 devices 注册表 |
+| POST | `/api/logger/update·delete·exclude·batch·clear·clear-empty` | 会话 / 写令牌 | 面板写操作；`clear` 另需 `{"confirm":true}`；多用户体系启用后匿名一律 401（禁止匿名添加数据），普通用户受 `logs.write` 功能限制约束 |
 | GET | `/api/subscribe` · `/api/subscribe/schema` | 匿名 | 已保存订阅 / 建表 DDL |
-| POST | `/api/subscribe/parse·save·delete` | 写令牌 | 服务端抓取解析 / 保存 / 删除 |
+| POST | `/api/subscribe/parse·save·delete` | 会话 / 写令牌 | 服务端抓取解析 / 保存 / 删除（`subscribe.manage` 功能限制） |
 | GET | `/api/rules` · `/api/rules/list` | 匿名 | 旧版 rules 表列表（`?search=`）/ Surge 订阅文本 |
-| POST | `/api/rules` · PUT·DELETE `/api/rules/:id` | 写令牌 | 旧版 rules 表增改删（兼容保留） |
-| GET·POST·DELETE | `/api/prefs` · GET `/api/prefs/schema` | 配置写令牌后读写删全部需令牌 | 偏好读写删（`?user=` 设备标识；DELETE 带 `key=` 或 `key=__all__`；`gist.token` 存这张表，不能匿名读） |
-| GET | `/api/health` | 匿名（deep 在配置写令牌后需令牌） | 部署健康检测：`?mode=basic`（默认，全只读）/ `?mode=deep`（写探针三步同事务、令牌校验、按 IP 每分钟一次）；返回逐项状态 / 耗时 / 修复建议 / 文档锚点与汇总，全程脱敏 |
+| POST | `/api/rules` · PUT·DELETE `/api/rules/:id` | 会话 / 写令牌 | 旧版 rules 表增改删（兼容保留） |
+| GET·POST·DELETE | `/api/prefs` · GET `/api/prefs/schema` | 会话 / 写令牌 | 偏好读写删（`?user=` 设备标识；DELETE 带 `key=` 或 `key=__all__`；`gist.token` 存这张表，匿名不可读） |
+| GET | `/api/health` | 匿名（deep 需会话/写令牌 + 二次确认） | 部署健康检测：`?mode=basic`（默认，全只读）/ `?mode=deep&confirm=1`（写探针三步同事务、令牌校验、按 IP 每分钟一次，缺 `confirm=1` 返回 400）；返回分类视图 `categories`（system / database / client / version）、全链路自证 `chain` 与逐项状态 / 耗时 / 修复建议 / 文档锚点，`?device-id=` / `?username=` / `?device-type=` 隔离检测范围，全程脱敏 |
+| POST | `/api/auth/bootstrap` | 仅体系未初始化时 | 创建首个管理员并直接签发会话（users 表非空后一律 409） |
+| POST | `/api/auth/login` · `/logout` | 匿名 / 会话 | 账号密码登录签发 7 天会话令牌 / 注销当前会话 |
+| GET | `/api/auth/me` | 匿名 | 当前身份：`authenticated` / `authEnabled` / `isAdmin` / `user` / `features` 功能限制清单 |
+| POST | `/api/auth/change-password` | 会话 | 修改自己的密码（当前密码校验，其余会话全部失效） |
+| GET·POST | `/api/users` · PATCH·DELETE `/api/users/:id` | 管理员 | 用户管理：列表 / 创建 / 更新（含禁用启用与改密）/ 删除；保护约束：不能删除或停用最后一个可用管理员、不能删除自己 |
+| GET·POST | `/api/groups` · PATCH·DELETE `/api/groups/:id` | 管理员 | 用户组管理：组的 `features` 功能限制作为成员默认值（用户级覆盖组级）；删除组仅解绑成员 |
 | GET | `/api/ai/config` · `/api/ai/status` | 匿名 | AI 分流自动化：读全局配置（token 只回掩码）/ 队列统计 + 上次运行摘要 + 下次可运行时间 |
-| GET | `/api/ai/usage` | 匿名（`?force=1` 跳缓存需写令牌） | Cloudflare 用量（服务端代理 GraphQL Analytics API，60 秒缓存）：过去 24 小时 Workers AI 请求 / Token / 模型分布与 Workers 请求次数（按脚本分布）；凭据复用 AI 连接配置，未配置返回 `configured:false`，AI 与 Workers 两路独立容错、失败以 `warnings` 带回 |
-| POST | `/api/ai/config` | 写令牌 | 保存 Workers AI 连接与调度配置（token 留空或传掩码 = 保留旧值） |
-| GET | `/api/ai/models` · POST `/api/ai/test` | 写令牌 | 代理拉取账号可用文本生成模型 / 跑一条最小推理测连通 |
-| POST | `/api/ai/run` | 写令牌（额外接受 `?token=`，供外部定时器） | 执行一轮批量分流（一批 = `batchSize` 条）；冷却期内返回 `skipped`，`?force=1` 跳过 |
-| POST | `/api/ai/reset` | 写令牌 | 清空 `ai_processed` 标记，全部候选规则重新参与调度 |
-| GET | `/api/schema[/table/:key]` | 匿名 | 全量 / 单表 DDL（`rules`/`logger`/`prefs`/`subscriptions`/`health`/`heartbeats`/`devices`/`meta`） |
+| GET | `/api/ai/usage` | 匿名（`?force=1` 跳缓存需鉴权） | Cloudflare 用量（服务端代理 GraphQL Analytics API，60 秒缓存）：过去 24 小时 Workers AI 请求 / Token / 模型分布与 Workers 请求次数（按脚本分布）；凭据复用 AI 连接配置，未配置返回 `configured:false`，AI 与 Workers 两路独立容错、失败以 `warnings` 带回 |
+| POST | `/api/ai/config` | 会话 / 写令牌 | 保存 Workers AI 连接与调度配置（token 留空或传掩码 = 保留旧值；`ai.config` 功能限制） |
+| GET | `/api/ai/models` · POST `/api/ai/test` | 会话 / 写令牌 | 代理拉取账号可用文本生成模型 / 跑一条最小推理测连通 |
+| POST | `/api/ai/run` | 会话 / 写令牌（额外接受 `?token=`，供外部定时器） | 执行一轮批量分流（一批 = `batchSize` 条）；冷却期内返回 `skipped`，`?force=1` 跳过；登录用户受 `ai.run` 功能限制约束 |
+| POST | `/api/ai/reset` | 会话 / 写令牌 | 清空 `ai_processed` 标记，全部候选规则重新参与调度 |
+| GET | `/api/schema[/table/:key]` | 匿名 | 全量 / 单表 DDL（`rules`/`logger`/`prefs`/`subscriptions`/`health`/`heartbeats`/`devices`/`meta`/`auth`） |
 
 响应约定：`/api/logger`、`/api/subscribe` 下的只读接口带 `Cache-Control: public, max-age=30`
 （`/api/logger/export` 为 60），写操作与 `/hit` 带 `no-store`（`/api/prefs` 的写接口不设缓存头）；
@@ -162,12 +168,17 @@ api/*.js（薄分发）
 环境变量：`TURSO_API_URL`、`TURSO_AUTH_TOKEN`、`PANEL_HIT_TOKEN`（必填，https 形式 / 逗号分隔多令牌）；
 `PANEL_WRITE_TOKEN`（可选，逗号分隔多令牌）；
 `DB_BACKEND`（可选，`turso`（默认）/ `d1` / `sqlite`，见下文「多数据库工厂」）。
-上报令牌未配置时 `/api/logger/hit` 一律 401；写令牌未配置时写接口保持开放，
-只读响应带 `Warning` 头、`/meta` 返回 `writeAuthRequired: false`。
+上报令牌未配置时 `/api/logger/hit` 一律 401；写令牌未配置时写接口回落多用户鉴权
+（体系也未初始化时保持开放，只读响应带 `Warning` 头、`/meta` 返回 `writeAuthRequired: false`）。
 上报接口只要求「任一已配置令牌匹配即可」——只配了 `PANEL_WRITE_TOKEN` 时，
 拿写令牌也能上报（`requireHitToken` 对两个变量一视同仁；两个变量都配置时
-任一变量里的令牌均可上报）。偏好接口 `/api/prefs` 在配置了写令牌时读 / 写 / 删
-全部要求令牌（`gist.token` 与普通偏好同表，匿名可读等于暴露凭据）。
+任一变量里的令牌均可上报）。
+
+**多用户鉴权体系启用后**（`/api/auth/bootstrap` 创建首个管理员），策略升级为：
+匿名添加数据一律 401（写接口与上报接口都必须携带合法鉴权）；会话用户与管理令牌
+（`PANEL_WRITE_TOKEN`，视同管理员）放行；上报令牌仅限数据上报，不能执行面板写操作。
+普通用户的可用功能由用户 / 用户组的 `features` 配置约束（`logs.write` / `subscribe.manage`
+/ `ai.config` / `ai.run`，支持经 `registerFeaturePolicy` 注册动态策略——预留 AI 检测等扩展）。
 
 ## 部署教程（Turso + Cloudflare Pages）
 
@@ -307,19 +318,66 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   UNIQUE(url)
 );
 CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
+
+CREATE TABLE IF NOT EXISTS user_groups (      -- v4：用户组（组级功能限制）
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  permissions TEXT NOT NULL DEFAULT '{}',     -- JSON：{"features": {"ai.run": "deny"}}
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (            -- v4：账号用户（PBKDF2 哈希）
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',          -- admin | user
+  group_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',      -- active | disabled
+  permissions TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_login_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (    -- v4：面板登录会话（只存哈希）
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  user_agent TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
+-- devices 表 v4 增量列（旧库手工补）：
+--   ALTER TABLE devices ADD COLUMN device_type TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE devices ADD COLUMN platform_params TEXT NOT NULL DEFAULT '';
+--   CREATE INDEX IF NOT EXISTS idx_devices_type ON devices(device_type);
 ```
 
 > 老库缺列要分开看：`/api/logger` 首次访问会按 `db_meta` 版本表自动迁移
-> （v2 自动补 `ip` / `username` 列并建 `devices` 表，v1 自动补 `first_time`），
-> `type`/`value`/`params`/`source` 得按 `sql/schema.sql` 末尾的 `ALTER TABLE` 语句手工补齐；
+> （v4 自动建 `user_groups` / `users` / `auth_sessions` 三表并给 devices 补
+> `device_type` / `platform_params` 列，v2 自动补 `ip` / `username` 列并建 `devices` 表，
+> v1 自动补 `first_time`），`type`/`value`/`params`/`source` 得按 `sql/schema.sql`
+> 末尾的 `ALTER TABLE` 语句手工补齐；
 > 历史脏数据（策略被写成参数名、`first_time` 为空）可以跑
 > `node scripts/repair-logs.mjs`（默认 dry-run，加 `--apply` 才执行）。
 
 ### 5. 验证部署
 
 - 打开 `https://<项目名>.pages.dev`：面板正常加载、能拉到规则列表；
-- 点击首页仪表盘的「来源设备」卡片：进入设备检测综合视图，基础检测自动执行，数据库连通 / Schema / 读权限应为通过（写令牌未录入时为警告项），多设备在线状态与配置告警在同一视图展示；
-- 访问 `https://<项目名>.pages.dev/api/logger/meta`：返回 JSON（含 `writeAuthRequired` 与 `version` 字段）而非 HTML；
+- 顶栏出现「🚪 未登录」会话徽标，「👥 用户」页可执行管理员引导（初始化多用户体系，
+  可跳过——未初始化时写接口回落令牌校验，行为与 v1.4 一致）；
+- 点击首页仪表盘的「来源设备」卡片：进入设备检测综合视图，基础检测自动执行，按
+  系统配置 / 数据库 / Surge 客户端 / 版本与更新 分类展示，数据库连通 / Schema / 读权限应为通过
+  （写令牌未录入时为警告项），多设备在线状态、配置告警与版本监控在同一视图展示；
+- 访问 `https://<项目名>.pages.dev/api/logger/meta`：返回 JSON（含 `writeAuthRequired`、
+  `auth`、`deviceTypes`、`distribution` 与 `version` 字段）而非 HTML；
 - 访问 `https://<项目名>.pages.dev/api/export?policy=proxy`：返回订阅文本（默认带 `# Generated by` 统计头），说明固定订阅地址可用；
 - 之后 Surge 端把 `FINAL_WEB_URL` 填成 `https://<项目名>.pages.dev`、`FINAL_DB_TOKEN` 填第 3 步的上报令牌即可（中转地址自动补全，见下文「Surge 安装教程」）。
 
@@ -341,6 +399,52 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 > 否则会部署到另一个项目。
 
 ## 版本与更新、设备检测、AI 分流自动化、Cloudflare 用量与多数据库工厂
+
+### 多用户与权限体系（v1.5.0）
+
+「👥 用户」页（导航按身份显隐）提供完整的多用户管理面，实现位于 `functions/api/_auth/`、
+`functions/api/_users/` 与 `functions/_utils/auth/`：
+
+- **账号与用户组**：账号密码登录（PBKDF2-SHA256，`functions/_utils/auth/password.js`），
+  会话令牌 7 天有效、库里只存 SHA-256 哈希（原文仅登录响应返回一次）；
+  用户组承载组级功能限制，用户级配置覆盖组级，面板可跨设备同步登录态；
+- **管理员引导**：体系未初始化时「用户」页展示引导表单（`POST /api/auth/bootstrap`，
+  仅 users 表为空时可用），创建首个管理员后立即登录；重复引导一律 409；
+- **禁止匿名添加数据**：体系启用后写接口 / 上报接口的匿名请求一律 401，
+  上报令牌（`PANEL_HIT_TOKEN`）只能上报不能执行面板写操作，写令牌
+  （`PANEL_WRITE_TOKEN`）视同管理员（外部脚本与定时器兼容路径不变）；
+  匿名只读不受影响（订阅导出等场景照常可用）；
+- **快捷管理**：管理员可快速添加、禁用（禁用即踢全部会话）、删除用户与配置
+  角色 / 用户组 / 功能限制；保护约束——不能删除自己、不能停用或删除最后一个可用管理员；
+- **AI 与功能限制扩展（预留接口）**：功能清单 `logs.write` / `subscribe.manage` /
+  `ai.config` / `ai.run` / `users.manage`，用户编辑弹窗勾选即生效；
+  `functions/_utils/auth/policy.js` 的 `registerFeaturePolicy(feature, fn)` 可注册
+  动态策略（AI 检测、限流、灰度），判定顺序：令牌 → 管理员 → 动态策略 → 用户/组静态规则 → 默认允许；
+- **会话与密码**：设置页「会话与密码」卡支持改密（当前密码校验，改完其余会话失效）
+  与登出；顶栏会话徽标展示当前身份。
+
+数据库 schema v4：新增 `user_groups` / `users` / `auth_sessions` 三表
+（首次访问任意接口自动迁移，也可从 `/api/schema` 或 `sql/schema.sql` 手工执行）。
+
+### 来源设备五类型多维适配（v1.5.0）
+
+设备注册表（`devices`）新增 `device_type` 与 `platform_params` 两列，五种来源设备
+按 profile 定制上报参数与检测逻辑（`functions/_utils/device-profiles.js`）：
+
+| 类型 | 代号 | 识别方式 | 版本检测 | 说明 |
+|---|---|---|---|---|
+| Surge iOS | A | 请求体 `deviceType` / 头 `X-Final-Platform` / 型号推断（iPhone） | panel + logger 双组件 | 随请求自动携带系统版本与 Surge App 版本 |
+| Surge Mac | B | 同上（macOS / Mac 型号） | panel + logger 双组件 | 同上 |
+| Surge iPad | C | 同上（iPadOS / iPad 型号） | panel + logger 双组件 | 同上 |
+| 路由器插件 | D | 同上 / UA 特征（curl、OpenWrt 等） | 插件版本视作上报组件 | 无面板交互，底层请求参数适配上报 |
+| 纯 API | E | 无任何设备上下文 | 不检测 | 一次性 CRUD 提交单条记录，按来源 IP 注册，不产生「校验失败」告警 |
+
+- 上报通道：Surge 三件套（v1.5.0 起）在既有头之外捎带 `X-Final-Platform` /
+  `X-Final-System` / `X-Final-Surge-Version`，`/hits` 请求体另带
+  `deviceType` / `systemVersion` / `surgeVersion` / `pluginVersion` 字段；
+- 服务端把平台专属参数快照进 `platform_params`（JSON），设备检测视图逐台展示
+  类型徽标（A–E）与平台参数，版本类告警按 profile 隔离（E 不告警、D 不要求面板版本）；
+- 旧客户端（无类型头）继续按型号推断，完全兼容。
 
 ### AI 配置导航：Cloudflare Workers AI 自动分流（v1.3.0）
 
@@ -526,13 +630,24 @@ Workers 请求次数同理：把数据集换成 `workersInvocationsAdaptive`（�
 
 ### 部署健康检测（配置检测，已并入设备检测视图）
 
-进入「📱 设备检测」综合视图即自动执行基础检测（单次请求，无逐项轮询）：
+进入「📱 设备检测」综合视图即自动执行基础检测（单次请求，无逐项轮询），检测项按
+**四类分组**展示（响应同时保留平铺 `checks` 兼容旧前端）：
 
-- **basic（全只读）**：环境变量在位与格式 → 数据库 ping → Schema 一致性（表 / 列 /
-  `DB_SCHEMA_VERSION`）→ 读权限 → 令牌在位性 → Surge 客户端心跳状态；
-- **deep（需二次确认）**：向独立的 `health_probe` 表写入带唯一标记的探针行 → 同一
-  批量事务内读回比对并删除（失败自动回滚，任何情况不留残留）→ 写令牌强制校验 →
-  上报令牌匹配校验；服务端按来源 IP 每分钟节流一次；
+- **system（系统配置）**：环境变量在位与格式、多用户鉴权体系状态、写令牌 / 上报令牌在位与校验；
+- **database（数据库）**：数据库 ping → Schema 一致性（表 / 列 / `DB_SCHEMA_VERSION`）→ 读权限 →
+  深度探针三步；
+- **client（Surge 客户端）**：设备心跳、在线状态与配置告警；
+- **version（版本与更新）**：网页面板 / Surge 面板脚本 / 捕获脚本本地副本 / Surge 模块的
+  版本比对与分发通道（Pages 自托管源），点名落后设备并给出更新建议。
+
+- **全链路自证**：响应 `chain` 字段给出 浏览器 → Pages → 数据库 → Surge 客户端 四段连通结论；
+- **检测项按需隔离**：`?device-id=` / `?username=` / `?device-type=` 把客户端与版本类检测
+  限定到单台设备 / 单个用户 / 单一设备类型（设备检测视图顶部下拉框选择，避免全局共用导致误报）；
+- **basic（全只读）**：执行完整的基础只读检测项，快速定位环境变量、Schema 一致性、读权限、令牌校验等；
+- **deep（需二次确认）**：向独立的 `health_probe` 表写入一行临时数据并在同一事务内安全删除
+  （失败自动回滚，任何情况不留残留）→ 写令牌强制校验 → 上报令牌匹配校验；
+  服务端按来源 IP 每分钟节流一次；**请求必须附带 `confirm=1`**（前端弹窗二次确认后自动携带），
+  缺省返回 400；
 - 失败项可展开看修复建议与 readme 锚点；「复制诊断报告」输出服务端已脱敏的纯文本
   （只留主机名，不含令牌与完整地址）；
 - 客户端连通状态：Surge 面板脚本每次刷新在既有 `/stats` 请求上捎带心跳
@@ -737,7 +852,10 @@ Surge 不向规则脚本暴露命中策略（官方 `$request` 只有 hostname /
   批量分块、固定订阅 `/api/export` 的偏好筛选、批量上报 `/hits`、事务回滚与
   数据库故障注入（打桩适配器原型），并跑真实 `wrangler build` 校验 `_routes.json`
   覆盖全部 API 子路径；另覆盖版本握手（meta 版本清单、latest 捎带、全产物版本戳一致性）、
-  心跳注册表与 `/api/health` 基础 / 深度检测（含探针无残留、节流、令牌门禁）；
+  心跳注册表与 `/api/health` 基础 / 深度检测（含探针无残留、节流、令牌门禁、confirm 二次确认、
+  分类视图与全链路自证）；v1.5.0 起另覆盖多用户体系（bootstrap / 登录会话 / 匿名写拒绝 /
+  用户与用户组 CRUD / 禁用踢会话 / 最后管理员保护 / 功能级限制与动态策略预留接口）与
+  设备五类型适配（A–E 识别、平台参数快照、插件版本映射、检测隔离）；
 - `tests/db-adapters.test.mjs`：适配器契约测试——同一组断言跑全部后端
   （turso 本地 https mock、D1 本地模拟绑定、node:sqlite 真实库），外加
   `ensureSchema` 三态迁移（全新 / 历史补列 / 未来版本放行）与工厂校验（非法后端、

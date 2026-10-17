@@ -30,7 +30,7 @@ export function configuredHitToken(env) {
 }
 
 /** 逗号切分成令牌数组：过滤空段，避免「连续逗号」产生可被空串匹配的缺口 */
-function splitTokenList(raw) {
+export function splitTokenList(raw) {
   return String(raw ?? '')
     .split(',')
     .map((part) => part.trim())
@@ -42,9 +42,8 @@ export function anyConfiguredToken(env) {
   return [...splitTokenList(configuredWriteToken(env)), ...splitTokenList(configuredHitToken(env))];
 }
 
-/**
- * 逐字符累计差异的等长比较：长度不同也走同样的比较路径，
- * 抹平「提前返回」带来的时序差异（JS 无法做到严格恒定时间，这里是实用近似）。
+/** 逐字符累计差异的等长比较：长度不同也走同样的比较路径，
+ *  抹平「提前返回」带来的时序差异（JS 无法做到严格恒定时间，这里是实用近似）。
  */
 function timingSafeEqual(a, b) {
   const left = String(a);
@@ -57,7 +56,8 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-function isAnyTokenMatch(configuredTokens, supplied) {
+/** 任一已配置令牌与请求携带值匹配（principal.js 复用同一比较实现） */
+export function isAnyTokenMatch(configuredTokens, supplied) {
   const value = String(supplied ?? '');
   return configuredTokens.some((token) => timingSafeEqual(token, value));
 }

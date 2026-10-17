@@ -69,7 +69,7 @@ var dbUrl = isHttps ? toApiUrl(rawUrl) : "";
 var webUrl = isHttps ? toWebUrl(rawUrl) : "";
 
 /** 脚本版本：随仓库发版注入（scripts/inject-version.mjs），上报与版本比对以此为准 */
-var SCRIPT_VERSION = "1.4.0";
+var SCRIPT_VERSION = "1.5.0";
 
 /** 把配置写入持久化，供本地部署的 final-logger 捕获脚本跨脚本读取（变更才落盘） */
 var CONFIG_KEY = "final_db_config";
@@ -137,6 +137,29 @@ function deviceModel() {
             return trim($environment["device-model"]);
         }
     } catch (error) {}
+    return "";
+}
+
+/** 设备五类型适配（v1.5）：读 $environment 的扩展键，全部拿不到留空 */
+function environmentValue(key) {
+    try {
+        if (typeof $environment !== "undefined" && $environment) {
+            return trim($environment[key]);
+        }
+    } catch (error) {}
+    return "";
+}
+
+/** 平台 key：system 串（iOS / iPadOS / macOS）优先，型号推断兜底 */
+function platformKey() {
+    var system = environmentValue("system").toLowerCase();
+    if (system.indexOf("ipados") === 0) return "surge-ipad";
+    if (system.indexOf("ios") === 0) return "surge-ios";
+    if (system.indexOf("macos") === 0 || system.indexOf("os x") === 0) return "surge-mac";
+    var model = deviceModel().toLowerCase();
+    if (model.indexOf("ipad") > -1) return "surge-ipad";
+    if (model.indexOf("iphone") > -1) return "surge-ios";
+    if (model.indexOf("mac") > -1) return "surge-mac";
     return "";
 }
 
@@ -282,7 +305,12 @@ function loadFromApi() {
             "X-Final-Logger": (readLoggerMeta() || {}).version || "",
             "X-Final-Device": deviceModel(),
             "X-Final-User": username,
-            "X-Final-Refresh": String(refreshSeconds)
+            "X-Final-Refresh": String(refreshSeconds),
+            // v1.5 平台专属参数：设备类型 / 系统版本 / Surge 版本，
+            // 服务端按设备 profile（A iOS / B Mac / C iPad）定制版本检测项
+            "X-Final-Platform": platformKey(),
+            "X-Final-System": environmentValue("system"),
+            "X-Final-Surge-Version": environmentValue("surge-version")
         }
     };
     $httpClient.get(options, function (error, response, data) {

@@ -10,6 +10,8 @@ import { $, cpEscape } from './dom.js';
 import { cpToast } from './notify.js';
 import { cpCopy } from './clipboard.js';
 import { getWriteToken } from './prefs-store.js';
+import { getSessionToken } from './auth.js';
+import { state } from './config.js';
 
 const STATUS_META = {
     pass: { icon: '✅', badge: 'text-bg-success', label: '通过' },
@@ -21,18 +23,25 @@ const STATUS_META = {
 const SUMMARY_BADGE = { pass: 'text-bg-success', warn: 'text-bg-warning', fail: 'text-bg-danger' };
 const SUMMARY_TEXT = { pass: '✅ 链路健康', warn: '⚠️ 有警告项', fail: '❌ 存在失败项' };
 
+const CHAIN_LABEL = { browser: '🌐 浏览器', pages: '📄 Pages Functions', database: '🗄️ 数据库', surge: '📱 Surge 客户端' };
+
 let lastReport = null;
 let running = false;
 
-/** 健康检测请求：GET；深度检测自动附带写令牌（服务端要求） */
+/** 健康检测请求：GET；深度检测自动附带鉴权（会话令牌优先，回落写令牌）与 confirm=1 二次确认标记 */
 async function fetchHealth(mode) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     const headers = {};
-    const token = getWriteToken();
+    const token = getSessionToken() || getWriteToken();
     if (token) headers.Authorization = `Bearer ${token}`;
+    const scope = readScope();
+    const params = new URLSearchParams({ mode });
+    if (mode === 'deep') params.set('confirm', '1'); // 服务端要求显式二次确认（前端已弹窗确认）
+    if (scope.deviceId) params.set('device-id', scope.deviceId);
+    if (scope.username) params.set('username', scope.username);
     try {
-        const response = await fetch(`/api/health?mode=${encodeURIComponent(mode)}`, {
+        const response = await fetch(`/api/health?${params.toString()}`, {
             headers,
             signal: controller.signal
         });
@@ -49,6 +58,13 @@ async function fetchHealth(mode) {
     }
 }
 
+/** 检测隔离范围（检测项按需隔离）：设备下拉框选择单台设备时只检测该设备 */
+function readScope() {
+    const selector = $('cpHealthScopeDevice');
+    return { deviceId: selector && selector.value ? selector.value : '' };
+}
+
+/** 逐项渲染（分类标题由 renderReport 插入） */
 function checkItemHtml(item, index) {
     const meta = STATUS_META[item.status] || STATUS_META.skip;
     const fix = item.fix
@@ -72,12 +88,48 @@ function checkItemHtml(item, index) {
         </div>`;
 }
 
+/** 分类标题条（v1.5 诊断分类）：系统配置 / 数据库 / Surge 客户端 / 版本与更新 */
+function categoryHeaderHtml(category) {
+    const meta = STATUS_META[category.overall] || STATUS_META.skip;
+    return `
+        <div class="list-group-item list-group-item-secondary d-flex flex-wrap align-items-center gap-2 py-2">
+            <span class="fw-semibold small">🗂️ ${cpEscape(category.label)}</span>
+            <span class="badge ${meta.badge}">${meta.label}</span>
+            <span class="small text-muted">${cpEscape(category.description || '')}</span>
+        </div>`;
+}
+
 function renderReport(report) {
     const list = $('cpHealthList');
     const summary = $('cpHealthSummary');
     if (!list || !summary) return;
 
-    list.innerHTML = report.checks.map(checkItemHtml).join('');
+    // 分类视图：带分类信息的报告按 category 分组插入标题条；旧后端没有 category 字段时平铺
+    const hasCategories = report.checks.some((item) => item.category);
+    const parts = [];
+    let index = 0;
+    if (hasCategories && Array.isArray(report.categories)) {
+        for (const category of report.categories) {
+            const items = report.checks.filter((item) => item.category === category.id);
+            if (!items.length) continue;
+            parts.push(categoryHeaderHtml(category));
+            for (const item of items) parts.push(checkItemHtml(item, index++));
+        }
+        if (report.chain) {
+            const chainText = Object.entries(report.chain)
+                .map(([key, status]) => `${CHAIN_LABEL[key] ?? key} ${STATUS_META[status]?.icon ?? '•'}`)
+                .join('  ');
+            parts.push(`
+                <div class="list-group-item d-flex flex-wrap gap-2 align-items-center py-2">
+                    <span class="fw-semibold small">🔗 全链路自证</span>
+                    <span class="small">${cpEscape(chainText)}</span>
+                </div>`);
+        }
+    } else {
+        for (const item of report.checks) parts.push(checkItemHtml(item, index++));
+    }
+    list.innerHTML = parts.join('');
+
     const counts = report.summary.counts;
     summary.innerHTML = `
         <div class="d-flex flex-wrap align-items-center gap-2">
@@ -164,9 +216,28 @@ export async function copyHealthReport() {
     await cpCopy(lines.join('\n'), '诊断报告已复制');
 }
 
+/** 设备隔离范围选择器：设备清单到达后填充（检测项按需隔离——单台设备独立检测） */
+export function populateHealthScope() {
+    const selector = $('cpHealthScopeDevice');
+    if (!selector) return;
+    const current = selector.value;
+    const devices = state.stats?.devices || [];
+    selector.innerHTML = '<option value="">全部设备</option>' +
+        devices.map((device) => {
+            const title = [device.username, device.name || device.deviceId].filter(Boolean).join(' · ');
+            const short = device.deviceId.startsWith('client:') ? device.deviceId.slice(7) : device.deviceId;
+            return `<option value="${cpEscape(device.deviceId)}">${cpEscape(title)}（${cpEscape(short.slice(0, 12))}）</option>`;
+        }).join('');
+    if ([...selector.options].some((option) => option.value === current)) selector.value = current;
+}
+
 /** 初始化：进入设备检测综合视图自动执行基础检测（原「配置检测」页已并入该视图） */
 export function initHealthView() {
     document.addEventListener('cp:page', (event) => {
         if (event.detail === 'devices' && !lastReport && !running) runChecks('basic');
+    });
+    $('cpHealthScopeDevice')?.addEventListener('change', () => {
+        lastReport = null;
+        runChecks('basic');
     });
 }

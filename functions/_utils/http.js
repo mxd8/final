@@ -40,6 +40,10 @@ export function notFound(error = '规则不存在') {
   return jsonResponse({ success: false, error }, { status: 404 });
 }
 
+export function unauthorized(error = '未通过鉴权') {
+  return jsonResponse({ success: false, error }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
+}
+
 export function methodNotAllowed(method, allow) {
   return jsonResponse(
     { success: false, error: `不支持的方法：${method}` },
