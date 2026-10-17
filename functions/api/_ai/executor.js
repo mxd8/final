@@ -151,6 +151,8 @@ export async function runAiBatch(db, config, { force = false } = {}) {
     failed: 0,
     /** 传输级失败（超时 / 限流 / 断网）：未标记，留在队列等下一轮 */
     errors: 0,
+    /** 免费额度用尽（429）：当日重试无意义，中止本轮等待次日恢复 */
+    quotaExceeded: false,
     aborted: false,
     remaining: 0
   };
@@ -174,6 +176,14 @@ export async function runAiBatch(db, config, { force = false } = {}) {
         output = parseAiOutput(text);
         consecutiveErrors = 0;
       } catch (error) {
+        // 免费额度（10,000 Neurons/天）用尽：上游返回 429，继续重试只会刷满错误计数，
+        // 直接中止本轮；条目未标记已处理，队列原样保留，次日额度恢复后自动续跑
+        if (Number(error?.status) === 429) {
+          summary.quotaExceeded = true;
+          summary.aborted = true;
+          console.warn('[ai][executor] 今日 AI 额度已达上限（429），中止本轮');
+          break;
+        }
         // 传输级失败（超时 / 限流 / 断网）：不标记已处理，留给下一轮
         consecutiveErrors += 1;
         summary.errors += 1;

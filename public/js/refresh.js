@@ -10,6 +10,7 @@
 import { cpLoadLogs, cpLoadStats, cpLoadMeta, ensureAllLogs } from './api.js';
 import { populateSourceFilters, populateTypeFilterSelect, renderLogList } from './render.js';
 import { renderDevicePanel } from './devices.js';
+import { cpLoadUsage } from './usage.js';
 import { refreshExportSummary } from './export.js';
 import { cpSetBusy, cpToast } from './notify.js';
 import { loadSubscriptions } from './subscribe.js';
@@ -27,6 +28,8 @@ async function doRefreshAll() {
     // stats 捎带的客户端心跳（版本看板的 Surge 侧数据）与设备报表到达后刷新对应视图
     renderVersionBoard();
     renderDevicePanel();
+    // Cloudflare 用量卡：自带 60 秒服务端缓存，失败只降级为提示文字，不影响其余刷新
+    cpLoadUsage();
 }
 
 let refreshChain = Promise.resolve();

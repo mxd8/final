@@ -282,6 +282,12 @@ body.cp-nav-bottom main.cp-pages {
     font-size: 0.68rem;
     line-height: 1.3;
 }
+/* Cloudflare 用量卡：模型名 / 脚本名等文本值比纯数字长，缩小一号防止撑破格子 */
+.cp-stat .value.cp-stat-value-sm {
+    font-size: 1rem;
+    line-height: 1.35;
+    word-break: break-all;
+}
 
 /* 表头显隐：被隐藏的列（th 与 td 均带 data-col） */
 .cp-rule-table .cp-col-hidden {

@@ -10,6 +10,7 @@ import { CP_CONFIG } from './config.js';
 import { $ } from './dom.js';
 import { cpToast } from './notify.js';
 import { cpRequest } from './api.js';
+import { cpLoadUsage } from './usage.js';
 
 const AI_BASE = CP_CONFIG.aiBase;
 const SCHEDULER_TICK_MS = 60000;
@@ -112,6 +113,8 @@ export async function aiSaveConnection() {
         $('cpAiToken').value = '';
         setConnStatus(`✅ 已保存${cachedConfig.hasToken ? `（Token ${cachedConfig.tokenMask}）` : '（尚未配置 Token）'}`);
         cpToast('连接配置已保存', 'success');
+        // 凭据刚配好 / 换号：立即拉一次 Cloudflare 用量，仪表盘卡片不用等下一轮刷新
+        cpLoadUsage();
     } catch (error) {
         cpToast(`保存失败：${error.message}`, 'danger');
     }
@@ -174,6 +177,9 @@ function renderAiStatus(data) {
 
     const parts = [];
     if (data.running) parts.push('⏳ 一轮处理进行中…');
+    if (data.lastSummary?.quotaExceeded) {
+        parts.push('🚫 今日 AI 额度已达上限（429 Too Many Requests）：免费额度 10,000 Neurons/天已用尽，队列保留，次日自动恢复');
+    }
     if (data.lastSummary) {
         const s = data.lastSummary;
         const failures = Number(s.failed || 0) + Number(s.errors || 0);
@@ -235,6 +241,11 @@ async function drainQueue({ force, notify }) {
             const summary = result.summary || {};
             if (notify && summary.attempted) {
                 cpToast(`本批尝试 ${summary.attempted} 条：改策略 ${summary.policyUpdated}，补注释 ${summary.commentFilled}`, 'success');
+            }
+            // 免费额度用尽：当日重试无意义，停止继续消化，状态区已有醒目提示
+            if (summary.quotaExceeded) {
+                if (notify) cpToast('今日 AI 额度已达上限（429），本轮中止，次日自动恢复', 'warning');
+                break;
             }
             if (summary.remaining <= 0 || summary.aborted) break;
         }

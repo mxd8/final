@@ -10,6 +10,9 @@
  *   GET  /api/ai/models   代理拉取账号可用的文本生成模型列表             [写令牌]
  *   POST  /api/ai/test    连通性测试（跑一条最小推理）                  [写令牌]
  *   GET  /api/ai/status   队列统计 + 上次运行结果 + 下次可运行时间
+ *   GET  /api/ai/usage    Cloudflare 用量（GraphQL：AI 请求 / Token /
+ *                         Workers 请求，过去 24 小时；匿名可读，服务端
+ *                         60 秒缓存；?force=1 跳过缓存需写令牌）
  *   POST  /api/ai/run     执行一轮批量处理（一批 = batchSize 条）        [写令牌]
  *                         支持 Authorization 头或 ?token= 查询参数（外部定时器用）；
  *                         冷却期内返回 skipped（force=1 跳过，面板手动按钮用）
@@ -25,6 +28,7 @@ import { loadAiConfig, saveAiConfig, publicAiConfig, loadAiState } from './_ai/c
 import { listTextModels, testConnection } from './_ai/client.js';
 import { queueStats, resetProcessed } from './_ai/selector.js';
 import { runAiBatch } from './_ai/executor.js';
+import { getCfUsage } from './_ai/usage.js';
 
 const TAG = 'api/ai';
 
@@ -43,6 +47,7 @@ export async function onRequest(context) {
     if (method === 'GET' && path === '/api/ai/models') return getModels(context, db);
     if (method === 'POST' && path === '/api/ai/test') return test(context, db);
     if (method === 'GET' && path === '/api/ai/status') return status(context, db);
+    if (method === 'GET' && path === '/api/ai/usage') return usage(context, db, url);
     if (method === 'POST' && path === '/api/ai/run') return run(context, db, url);
     if (method === 'POST' && path === '/api/ai/reset') return reset(context, db);
 
@@ -117,6 +122,25 @@ async function status(context, db) {
       }
     },
     { headers: warningHeadersIfOpen(context.env) }
+  );
+}
+
+/**
+ * Cloudflare 用量：匿名可读（仅聚合数字，不含凭据），服务端 60 秒缓存兜底；
+ * ?force=1 跳过缓存属于主动打上游 GraphQL，要求写令牌。
+ */
+async function usage(context, db, url) {
+  const force = url.searchParams.get('force') === '1';
+  if (force) {
+    const writeDenied = requireWriteToken(context.env, context.request);
+    if (writeDenied) return writeDenied;
+  }
+
+  const config = await loadAiConfig(db);
+  const data = await getCfUsage(config, { force });
+  return jsonResponse(
+    { success: true, data },
+    { headers: { 'Cache-Control': 'no-store', ...warningHeadersIfOpen(context.env) } }
   );
 }
 
