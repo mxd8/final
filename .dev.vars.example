@@ -1,0 +1,39 @@
+# =============================================================================
+# 本地调试环境变量（仅本地，切勿提交）
+#
+# wrangler pages dev / dev 会自动读取项目根目录的 .dev.vars。
+# 生产环境的同名变量请在 Cloudflare 控制台 → Pages → Settings →
+# Environment Variables and Secrets 里配置，两处名称保持一致即可。
+#
+# 使用方式：cp .dev.vars.example .dev.vars，然后把占位符替换成真实值。
+# 项目源码里只有 functions/_utils/turso.js 读取这两个变量，没有第三个。
+# =============================================================================
+
+# Turso 数据库地址（必须 https://，libsql:// 是客户端协议，Workers 无法解析）
+# 获取：Turso 控制台 → 数据库 → Connect → HTTP API 一栏的地址
+TURSO_API_URL="https://your-database.turso.io"
+
+# Turso 访问令牌
+# 获取：Turso 控制台 → Database credentials → Access tokens → 新建并复制
+TURSO_AUTH_TOKEN="你的turso访问令牌"
+
+# -----------------------------------------------------------------------------
+# 可选：多数据库工厂（不配置默认 turso，行为与现有部署完全一致）
+#
+# DB_BACKEND="turso"          # turso（默认）/ d1 / sqlite
+#
+# d1：本地 dev 需要 wrangler.toml 配置 [[d1_databases]] 且绑定名 DB_D1（见 wrangler.toml）
+# DB_BACKEND="d1"
+#
+# sqlite：自托管 Node / 本地调试免 Turso；需要 Node 22.5+（node:sqlite）
+# DB_BACKEND="sqlite"
+# DB_SQLITE_PATH="./local.db"   # 本地库文件路径（:memory: 亦可，进程退出即失）
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# 可选：本地调试偏好同步接口时想固定某个设备标识，可用它代替前端随机生成的值，
+# 便于用 curl 复现同一个 user_id 的读写：
+#   curl "http://localhost:8787/api/prefs?user=test-device"
+# 代码里目前没有读取该变量，仅作为测试便利的占位。
+# PREFS_DEBUG_USER="test-device"
+# -----------------------------------------------------------------------------

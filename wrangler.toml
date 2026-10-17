@@ -1,0 +1,41 @@
+name = "final"
+compatibility_date = "2026-10-12"
+compatibility_flags = ["nodejs_compat"]
+
+# 说明：nodejs_compat 是运行时兼容标志，Wrangler 打包/上传时读取，
+# 让 workerd 认识 node:stream、node:events 这类 Node 内置模块。
+# 必须写在这里，不能只加 --compatibility-flags 命令行参数：
+#   - wrangler 4.151.0 的 "pages functions build" 不读取配置里的
+#     compatibility_flags（实测写一个不存在的假标志也不报 Invalid flag），
+#     所以构建阶段加了配置也还是老样子；
+#   - 部署阶段 "pages deploy" 会读配置，这也是 CI 实际走的路径。
+#   放配置里两条路径都覆盖，命令不用跟着改。
+# 不开这个标志的两个表现：
+#   1. 编译期 WARNING："The package node:stream wasn't found on the
+#      file system but is built into node"；
+#   2. 运行时崩溃：unenv 的 process polyfill 里
+#      "var Process = class _Process extends EventEmitter"，flag 缺失时
+#      超类是 undefined，esbuild 生成的 __name 在 class 的 static 初始化块
+#      里对 this 调 Object.defineProperty 失败，报
+#      "Uncaught TypeError: Object.defineProperty called on non-object
+#       at __name in <static_initializer>"，整个 Function 发布失败。
+
+# Pages 静态资源目录。必须是字符串路径，不能写成 [pages_build_output_dir] 表：
+# 新版 wrangler 校验规则是 string，写成表会在解析配置时直接报
+# Expected "pages_build_output_dir" to be of type string but got {"directory":"./dist"}
+pages_build_output_dir = "./dist"
+
+# 说明：Turso 连接超时不在这里配置，代码里是常量 TURSO_TIMEOUT_MS
+# （见 functions/_utils/turso.js），避免配置分散在两个地方。
+
+# ── 多数据库工厂（DB_BACKEND，见 functions/_utils/db/factory.js）─────────────
+# DB_BACKEND 是普通环境变量（Pages 控制台或 .dev.vars 配置，不写在这里）：
+#   turso（默认）  TURSO_API_URL + TURSO_AUTH_TOKEN      现有部署，零改动
+#   d1            平台绑定，绑定名必须是 DB_D1            Cloudflare 生态内闭环
+#   sqlite        DB_SQLITE_PATH 指定本地库文件            仅自托管 Node，不用于 Workers
+#
+# 想切到 d1 时取消下面注释、填入自己的 database_id，并在控制台确认绑定名为 DB_D1：
+# [[d1_databases]]
+# binding = "DB_D1"
+# database_name = "final"
+# database_id = "<你的 D1 数据库 ID>"

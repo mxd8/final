@@ -1,0 +1,21 @@
+{
+    "id": "/",
+    "name": "Surge 规则管理器",
+    "short_name": "Surge 规则",
+    "description": "基于 Cloudflare Pages + Turso 的 Surge 规则管理面板：订阅解析导入、FINAL 命中采集、设备来源追踪、命中过滤与订阅导出",
+    "lang": "zh-CN",
+    "dir": "ltr",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "theme_color": "#15151f",
+    "background_color": "#15151f",
+    "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+        { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+        { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+        { "src": "icons/mono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "monochrome" }
+    ]
+}

@@ -1,0 +1,150 @@
+# ============================================================================
+# 密钥与环境变量
+# ----------------------------------------------------------------------------
+# .dev.vars 是 wrangler pages dev 读取的本地变量文件，含真实 Turso 令牌，
+# 绝不能提交。示例文件 .dev.vars.example 用占位符，正常跟踪（故意不匹配）。
+#
+# 注意：这里只写 .env（精确匹配）和 .env.local 变体，
+# 不写 .env.* —— 那样会把 .env.example 这类模板文件一起排除掉。
+# ============================================================================
+.env
+.env.local
+.env.*.local
+.dev.vars
+
+# 其他可能的密钥/凭据文件形态
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_dsa
+credentials.json
+
+# ============================================================================
+# Node 依赖
+# ============================================================================
+node_modules/
+node_modules.lock
+.pnp
+.pnp.js
+
+# 包管理器缓存
+.npm
+.yarn/
+.yarnrc
+.pnpm-store/
+
+# ============================================================================
+# 构建产物
+# ----------------------------------------------------------------------------
+# dist/ 是 npm run build 的输出（含打包好的 _worker.js），每次构建都会重新生成，
+# 不入库；_routes.json 也由 wrangler 生成，不能手工维护。
+# ============================================================================
+dist/
+build/
+dist-ssr/
+out/
+public/_worker.js
+public/_routes.json
+_worker.js
+_worker.bundle
+
+# wrangler 本地状态：miniflare 的 KV / Cache / D1 / R2 模拟数据库是 sqlite 文件，
+# 既然大又含本地数据快照，一律不提交。
+.wrangler/
+
+# 打包工具缓存
+.cache/
+.eslintcache
+.stylelintcache
+
+# ============================================================================
+# IDE 与编辑器
+# ============================================================================
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~
+.history/
+*.code-workspace
+
+# ============================================================================
+# 测试与覆盖率
+# ============================================================================
+coverage/
+.nyc_output/
+*.lcov
+test-results/
+playwright-report/
+blob-report/
+cypress/
+.cypress/
+.nock/
+
+# 本地测试产物：e2e.mjs 运行时生成的自签证书目录，跑完即删
+turso-test-*/
+
+# ============================================================================
+# 日志
+# ============================================================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+# 只忽略仓库根的日志目录；无锚定的 logs/ 会误伤 functions/_utils/logs/ 这类源码目录
+/logs/
+*.debug
+*.stdout
+
+# ============================================================================
+# 系统与临时文件
+# ============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Trashes
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+.fseventsd/
+.Spotlight-V100/
+.TemporaryItems/
+.VolumeIcon.icns
+.com.apple.timemachine.dontpresentvolume
+
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.rej
+tmp/
+temp/
+.tmp/
+
+# ============================================================================
+# 进程与运行时
+# ============================================================================
+.pid
+.pid.lock
+.lock
+*.pid
+*.seed
+*.pid.lock
+run/
+*.rdb

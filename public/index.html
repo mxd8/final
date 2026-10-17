@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- Safari / 移动端顶部区域跟随主题色，与液态玻璃底色衔接 -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f2f7">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="基于 Cloudflare Pages + Turso 的 Surge 规则管理面板：订阅解析导入、FINAL 命中采集、设备来源追踪、命中过滤与固定地址订阅导出">
+    <title>Surge 规则管理器</title>
+
+    <!-- PWA：manifest、图标与 iOS 独立 App 模式声明（Service Worker 由 js/pwa.js 注册） -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <meta name="application-name" content="Surge 规则管理器">
+    <meta name="apple-mobile-web-app-title" content="Surge 规则">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <!-- black-translucent：独立模式下状态栏悬浮在内容上，topbar 用 safe-area env 撑开内边距 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <!-- Bootstrap 5（CDN）；版本集中在顶部，便于统一升级 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="captured.css">
+
+    <script>
+        // 尽早应用系统主题，避免页面加载时闪白；真实偏好加载后由面板逻辑再校正一次
+        document.documentElement.setAttribute(
+            'data-bs-theme',
+            window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        );
+    </script>
+</head>
+<body>
+    <!--
+      顶部导航：品牌行 + 页面导航行（首页 / 数据 / AI配置 / 设置）。
+      用自定义容器 + Bootstrap 组件类而不是 navbar 组件：navbar 自带的内边距与
+      折叠断点不符合本页的信息密度，自己控容器更省心。
+      注意：这条 topbar 不能加 overflow（hidden / auto），否则下拉菜单会被裁掉。
+      切换为「底部导航」后，导航行隐藏、#cpNavBottom（底部 TabBar）显示。
+    -->
+    <header class="cp-topbar">
+        <div class="cp-topbar-inner d-flex align-items-center justify-content-between gap-3">
+            <div class="d-flex align-items-center gap-3 flex-grow-1">
+                <div class="cp-brand">
+                    <span class="fw-bold">⚡ Surge 规则管理器</span>
+                    <span class="text-muted small d-none d-sm-inline" id="cpTopbarCount"></span>
+                </div>
+                <nav class="cp-nav cp-nav-top" id="cpNavTop" aria-label="页面导航"></nav>
+            </div>
+
+            <div class="cp-topbar-actions">
+                <!-- 版本徽标：有可用更新时由 version-check.js 显示，点击跳设置页版本看板 -->
+                <button type="button" class="btn btn-outline-warning btn-sm" id="cpVersionBadge" hidden
+                        aria-label="发现新版本，点击查看">🆙</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="themeToggleBtn"
+                        aria-label="切换浅色 / 深色模式">🌗</button>
+                <!-- PWA 安装入口：默认隐藏，beforeinstallprompt 触发时由 pwa.js 显示 -->
+                <button type="button" class="btn btn-outline-success btn-sm" id="pwaInstallBtn" hidden
+                        aria-label="把面板安装为独立应用">⬇️ 安装</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="capturePanel.reload()"
+                        aria-label="刷新全部数据">🔄 刷新</button>
+
+                <!-- 订阅解析：界面复杂（多行输入 + 进度 + 结果），用 Modal 承载 -->
+                <button type="button" class="btn btn-outline-primary btn-sm" onclick="capturePanel.openSubscribeModal()">
+                    🔗 订阅解析
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container py-4 cp-pages" role="main">
+        <!-- 版本更新横幅：网页自身落后时由 version-check.js 渲染（点击刷新触发 SW 更新并重载） -->
+        <div id="cpVersionBanner" hidden></div>
+
+        <!-- ============================================= 首页：统计 + 批量 + 导出 + 规则表 -->
+        <section id="cpPage-home">
+            <!-- 实时统计 -->
+            <section class="card mb-3" aria-labelledby="cpStatsTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpStatsTitle">📌 FINAL 实时统计</h2>
+                </div>
+                <div class="card-body p-0">
+                    <div class="cp-stats" id="cpStats">
+                        <div class="cp-stat"><div class="label">规则总数</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">触发总计</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">代理 / 直连</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">拦截 / 无备注</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">今日新增</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">来源设备</div><div class="value">-</div></div>
+                    </div>
+                </div>
+            </section>
+
+            <!--
+              批量逐行覆盖：原「✏️ 新增 / 编辑规则」表单与「⚡ 批量逐行覆盖」合并后剩下的唯一入口。
+              点击表格整行弹出快速编辑窗，改完保存即生效；复杂批量仍在这里粘贴执行。
+            -->
+            <section class="card mb-3" aria-labelledby="cpBatchTitle">
+                <div class="card-header">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h5 mb-0" id="cpBatchTitle">⚡ 批量逐行覆盖</h2>
+                        <span class="text-muted small">每行一条完整 Surge 规则：DOMAIN-SUFFIX,google.com,PROXY,no-resolve // 注释</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- 订阅来源：选择已保存的订阅，一键把解析结果填进编辑框 -->
+                    <div class="d-flex flex-wrap align-items-end gap-2 mb-2 cp-sub-source-row">
+                        <div>
+                            <label for="cpSubPicker" class="form-label small mb-1">📥 从订阅填充</label>
+                            <select id="cpSubPicker" class="form-select form-select-sm" style="min-width:220px;" aria-label="选择已保存的订阅">
+                                <option value="">尚未保存任何订阅</option>
+                            </select>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="cpSubFillBtn"
+                                onclick="capturePanel.fillFromSubscription()" disabled>读取并填充</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.openSubscribeModal()">🔗 管理订阅</button>
+                        <span class="text-muted small" id="cpSubHint">重复的匹配值只追加来源注释，不会改动已有策略</span>
+                    </div>
+
+                    <textarea id="cpBatchTextarea" class="form-control cp-mono mb-2" rows="8"
+                              aria-label="批量规则文本" placeholder="每行一条 Surge 规则，例如：
+DOMAIN-SUFFIX,google.com,PROXY // Google
+DOMAIN,api.example.com,DIRECT
+PROCESS-NAME,WeChat,DIRECT
+IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+URL-REGEX,&quot;https://.*\.png$&quot;,REJECT
+DOMAIN-KEYWORD,ads,REJECT,pre-matching
+FINAL,PROXY,dns-failed"></textarea>
+
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <button type="button" class="btn btn-success" id="cpBatchBtn" onclick="capturePanel.batchOverride()">
+                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            <span id="cpBatchBtnText">⚡ 执行逐行覆盖</span>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.fillTextareaFromTable()">把当前表格内容写入</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.clearBatchText()">清空文本</button>
+                        <button type="button" class="btn btn-sm btn-outline-warning d-none" id="cpCancelEditBtn"
+                                onclick="capturePanel.cancelEdit()">↩️ 取消编辑</button>
+                        <span class="text-muted small ms-auto" id="batchParseInfo">尚未粘贴规则</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 导出：固定订阅地址，点按钮即复制；筛选配置改动全局生效 -->
+            <section class="card mb-3" aria-labelledby="cpExportTitle">
+                <div class="card-header">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h5 mb-0" id="cpExportTitle">🔗 规则导出</h2>
+                        <!-- 筛选条件（来源 / 来源注释 / 命中次数）收进配置弹窗，按钮高亮表示有生效中的条件 -->
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="cpExportConfigBtn"
+                                data-bs-toggle="modal" data-bs-target="#cpExportConfigModal">⚙️ 筛选配置</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- 操作栏：点击即复制对应的固定订阅地址，括号内为当前条件下的规则条数 -->
+                    <div class="d-flex flex-wrap gap-2 mb-2" role="group" aria-label="复制固定订阅地址">
+                        <button type="button" class="btn btn-outline-success active" id="cpTypeAllBtn"
+                                onclick="capturePanel.copyExportLink('all')">📋 全部 (<span id="cpTypeAllCount">-</span>)</button>
+                        <button type="button" class="btn btn-outline-warning" id="cpTypeProxyBtn"
+                                onclick="capturePanel.copyExportLink('proxy')">🌐 PROXY (<span id="cpTypeProxyCount">-</span>)</button>
+                        <button type="button" class="btn btn-outline-success" id="cpTypeDirectBtn"
+                                onclick="capturePanel.copyExportLink('direct')">🟢 DIRECT (<span id="cpTypeDirectCount">-</span>)</button>
+                        <button type="button" class="btn btn-outline-danger" id="cpTypeRejectBtn"
+                                onclick="capturePanel.copyExportLink('reject')">🔴 REJECT (<span id="cpTypeRejectCount">-</span>)</button>
+                    </div>
+
+                    <p class="small text-muted mb-2">
+                        订阅地址固定为 <code>/api/export?policy=…</code>，点按钮即复制；
+                        「筛选配置」里的改动对所有地址立即生效，Surge 端<b>无需更换订阅地址</b>。
+                    </p>
+
+                    <!-- 导出摘要：真正生成订阅前先在面板上核对一遍 -->
+                    <div class="cp-export-summary small text-muted mb-0" id="cpExportSummary" role="status" aria-live="polite">
+                        正在统计…
+                    </div>
+                </div>
+            </section>
+
+            <!-- 规则表：订阅规则列表与 FINAL 捕获记录已合并成这一张表；整行点击即可编辑 -->
+            <section class="card mb-3" aria-labelledby="listTitle">
+                <div class="card-header">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h5 mb-0" id="listTitle">📦 规则表</h2>
+                        <div class="d-flex gap-2 flex-wrap" role="search" aria-label="筛选规则">
+                            <input type="search" class="form-control form-control-sm" style="width:auto;" id="cpSearch"
+                                   placeholder="🔍 匹配值 / 备注 / 来源…" aria-controls="cpTableBody">
+                            <select id="cpTypeFilter" class="form-select form-select-sm" style="width:auto;" aria-label="按规则类型筛选">
+                                <option value="ALL">全部类型</option>
+                            </select>
+                            <select id="cpSourceFilter" class="form-select form-select-sm" style="width:auto;" aria-label="按来源筛选">
+                                <option value="">全部来源</option>
+                            </select>
+                            <select id="cpPolicyFilter" class="form-select form-select-sm" style="width:auto;" aria-label="按策略筛选">
+                                <option value="ALL">全部策略</option>
+                            </select>
+                            <select id="cpSort" class="form-select form-select-sm" style="width:auto;" aria-label="排序方式">
+                                <option value="time-desc">⏱️ 最新</option>
+                                <option value="count-desc">🔥 最多</option>
+                                <option value="domain-asc">🔤 A-Z</option>
+                            </select>
+                            <select id="cpPageSize" class="form-select form-select-sm" style="width:auto;" aria-label="每页条数">
+                                <option value="20">20条</option>
+                                <option value="50" selected>50条</option>
+                                <option value="100">100条</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table align-middle table-hover table-sm mb-0 cp-rule-table">
+                            <caption class="visually-hidden">Surge 规则表，点击整行弹出快速编辑、降维排除与删除</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">类型</th>
+                                    <th scope="col">匹配值</th>
+                                    <th scope="col">策略</th>
+                                    <th scope="col" class="cp-col-params">参数</th>
+                                    <th scope="col">备注</th>
+                                    <th scope="col" class="cp-col-source">来源</th>
+                                    <th scope="col" class="cp-col-time">最近命中</th>
+                                    <th scope="col">次数</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cpTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div class="p-2 d-flex justify-content-between align-items-center">
+                        <span class="cp-page-info" id="cpPageInfo">显示第 0-0 条，共 0 条</span>
+                        <div class="d-flex align-items-center gap-1">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.changePage(-1)">上一页</button>
+                            <span class="cp-page-info" id="cpPageNum">1 / 1</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.changePage(1)">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </section>
+
+        <!-- ============================================= 数据：清理与高危操作 -->
+        <section id="cpPage-data" hidden>
+            <section class="card mb-3" aria-labelledby="cpCleanTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpCleanTitle">🧹 清理工具</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-2">
+                        删除所有<b>备注为空</b>的记录，有备注的规则原样保留。适合清理 FINAL 兜底抓到、
+                        但还没分流价值的零散域名 / IP。
+                    </p>
+                    <button type="button" class="btn btn-outline-warning" onclick="capturePanel.clearEmpty()">🧹 删除空备注记录</button>
+                </div>
+            </section>
+
+            <section class="card mb-3 border-danger" aria-labelledby="cpWipeCardTitle">
+                <div class="card-header border-danger">
+                    <h2 class="h5 mb-0 text-danger" id="cpWipeCardTitle">🗑️ 高危操作</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-danger small mb-2">
+                        将删除规则表里的<b>全部记录</b>并重置自增 ID，无法恢复。需要输入 <code>CLEAR</code> 二次确认。
+                    </p>
+                    <button type="button" class="btn btn-danger" onclick="capturePanel.wipeDatabase()">🗑️ 一键清空数据库</button>
+                </div>
+            </section>
+        </section>
+
+        <!-- ============================================= AI配置：分流提示词 + 匹配值复制 -->
+        <section id="cpPage-ai" hidden>
+            <section class="card mb-3" aria-labelledby="cpAiTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpAiTitle">🤖 AI 分流提示词</h2>
+                </div>
+                <div class="card-body">
+                    <label for="cpPromptInput" class="form-label small mb-1">💡 提示词</label>
+                    <textarea id="cpPromptInput" class="form-control cp-mono mb-2" rows="8"
+                              aria-label="AI 分流提示词"
+                              placeholder="复制「当前页匹配值」时自动置顶这段文字"></textarea>
+                    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.savePrompt()">💾 保存提示词</button>
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="cpOnlyEmptyComment">
+                            <label class="form-check-label small" for="cpOnlyEmptyComment">仅复制备注为空的匹配值</label>
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn btn-success" id="cpCopyPageBtn"
+                            onclick="capturePanel.copyPageDomains()">📋 复制当前页匹配值（0）</button>
+                    <p class="text-muted small mt-2 mb-0">
+                        「当前页」跟随首页规则表的筛选与分页变化；复制时提示词自动置顶，可直接粘贴给 AI 做分流。
+                    </p>
+                </div>
+            </section>
+        </section>
+
+        <!-- ============================================= 设置：外观 / 云同步 / 写令牌 -->
+        <section id="cpPage-settings" hidden>
+            <section class="card mb-3" aria-labelledby="cpLookTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpLookTitle">🎨 外观</h2>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label small mb-1 d-block">🌗 深浅模式</label>
+                        <div class="btn-group" role="group" aria-label="深浅模式">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.setTheme('light')">☀️ 浅色</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.setTheme('dark')">🌙 深色</button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="cpAccentPicker" class="form-label small mb-1">🎨 主题色</label>
+                        <select id="cpAccentPicker" class="form-select form-select-sm" style="width:auto;" aria-label="选择主题色"></select>
+                    </div>
+                    <div>
+                        <label for="cpNavPosition" class="form-label small mb-1 d-block">📍 导航位置</label>
+                        <select id="cpNavPosition" class="form-select form-select-sm" style="width:auto;" aria-label="选择导航位置">
+                            <option value="top">🔝 顶部导航</option>
+                            <option value="bottom">📱 底部 TabBar（适合手机单手操作）</option>
+                        </select>
+                        <p class="text-muted small mt-1 mb-0">切换为底部 TabBar 后，首页 / 数据 / AI配置 / 设置 / 配置检测 变为 iOS 风格的底部图标导航。</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 云同步与 Gist：原顶栏下拉整卡迁入设置页 -->
+            <section class="card mb-3" aria-labelledby="cpSyncTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpSyncTitle">☁️ 云同步与 Gist 配置</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-2">
+                        把规则表备份到 GitHub Gist，可多设备还原。Token 存在本数据库的偏好表里（服务端不鉴权），介意可改用只读 Gist。
+                    </p>
+                    <div class="mb-2">
+                        <label for="cpGistToken" class="form-label small mb-1">GitHub Token</label>
+                        <input type="password" id="cpGistToken" class="form-control form-control-sm"
+                               placeholder="ghp_xxxxxxxxxxxx" autocomplete="off">
+                    </div>
+                    <div class="mb-2">
+                        <label for="cpGistId" class="form-label small mb-1">Gist ID（留空则新建）</label>
+                        <input type="text" id="cpGistId" class="form-control form-control-sm" placeholder="已有 Gist ID 或留空">
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.saveGistConfig()">💾 保存配置</button>
+                        <button type="button" class="btn btn-sm btn-success" onclick="capturePanel.uploadToGist()">☁️ 上传到 Gist</button>
+                        <button type="button" class="btn btn-sm btn-outline-info" onclick="capturePanel.syncFromGist()">📥 从 Gist 同步</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 写接口令牌录入：后端启用 PANEL_WRITE_TOKEN 时显示，未保存前写操作会被 401 拒绝 -->
+            <section class="card mb-3 border-warning" id="cpAuthCard" hidden aria-labelledby="cpAuthTitle">
+                <div class="card-header border-warning">
+                    <h2 class="h5 mb-0" id="cpAuthTitle">🔐 写接口令牌</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-2">
+                        后端已启用 <code>PANEL_WRITE_TOKEN</code>，批量覆盖 / 降维 / 删除 / 清空 / 保存订阅等操作需要先填写令牌。
+                        令牌只保存在本机浏览器，不同步到偏好表。
+                    </p>
+                    <div class="d-flex gap-2">
+                        <input type="password" id="cpWriteToken" class="form-control form-control-sm"
+                               placeholder="填入 PANEL_WRITE_TOKEN" autocomplete="off"
+                               aria-label="写接口令牌">
+                        <button type="button" class="btn btn-sm btn-outline-warning" onclick="capturePanel.saveWriteToken()">保存令牌</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 版本与更新看板：组件 × 客户端版本 × 服务端最新 × 通道 × 状态（version-check.js 渲染） -->
+            <section class="card mb-3" aria-labelledby="cpVersionTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpVersionTitle">🧭 版本与更新</h2>
+                </div>
+                <div class="card-body">
+                    <div id="cpVersionBoard">正在加载版本信息…</div>
+                </div>
+            </section>
+        </section>
+
+        <!-- ============================================= 配置检测：部署健康检查 -->
+        <section id="cpPage-health" hidden>
+            <section class="card mb-3" aria-labelledby="cpHealthTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpHealthTitle">🩺 配置检测</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        自证整套链路（浏览器 → Pages → 数据库 → Surge 客户端）是否已通。
+                        基础检测全部只读；深度检测会向独立的探针表写入一行临时数据并在同一事务内删除，需二次确认。
+                    </p>
+                    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                        <button type="button" class="btn btn-success btn-sm" id="cpHealthBasicBtn"
+                                onclick="capturePanel.runHealthChecks('basic')">▶️ 开始检测</button>
+                        <button type="button" class="btn btn-outline-danger btn-sm" id="cpHealthDeepBtn"
+                                onclick="capturePanel.confirmDeepHealth()">🔬 深度检测</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="cpHealthCopyBtn"
+                                onclick="capturePanel.copyHealthReport()">📋 复制诊断报告</button>
+                        <span class="small text-muted" id="cpHealthHint" aria-live="polite"></span>
+                    </div>
+                    <div class="alert alert-secondary py-2 px-3 small d-none mb-3" id="cpHealthSummary" role="status"></div>
+                    <div class="list-group" id="cpHealthList">
+                        <div class="list-group-item text-muted small">打开本页即自动执行基础检测。</div>
+                    </div>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <!-- 底部 TabBar：默认隐藏，设置页切到「底部导航」时显示（内容由 nav.js 注入，与顶部导航一致） -->
+    <nav class="cp-nav cp-nav-bottom" id="cpNavBottom" aria-label="底部导航"></nav>
+
+    <!-- 订阅解析弹窗：URL 多行粘贴 + 并发抓取 + 进度 + 结果清单 -->
+    <div class="modal fade" id="cpSubModal" tabindex="-1" aria-labelledby="cpSubTitle" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title h6" id="cpSubTitle">🔗 URL 规则订阅解析</h3>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-2">
+                        每行一个订阅链接（仅支持 <code>https://</code>）。系统只保存提取出的规则地址，不保存订阅内容；
+                        重新解析会重新抓取一遍。抓取由服务端代发，因此不受浏览器跨域限制。
+                    </p>
+                    <label for="cpSubUrlInput" class="form-label small mb-1">订阅链接（每行一个）</label>
+                    <textarea id="cpSubUrlInput" class="form-control cp-mono mb-2" rows="4"
+                              aria-label="订阅链接，每行一个"
+                              placeholder="https://example.com/rules/surge.list&#10;https://another.example/subscribe?token=xxx"></textarea>
+
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button type="button" class="btn btn-primary btn-sm" id="cpSubParseBtn"
+                                onclick="capturePanel.parseSubscriptions()">
+                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            <span id="cpSubParseBtnText">🚀 解析并保存</span>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.clearSubInput()">清空输入</button>
+                        <span class="align-self-center small text-muted" id="cpSubParseInfo">尚未开始</span>
+                    </div>
+
+                    <!-- 进度条：批量解析时实时反馈，避免看起来像卡死 -->
+                    <div class="progress cp-sub-progress mb-3 d-none" id="cpSubProgress" role="progressbar"
+                         aria-label="订阅解析进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+                    </div>
+
+                    <h4 class="h6 mb-2">已保存的订阅</h4>
+                    <div id="cpSubList" class="cp-sub-list small">还没有保存任何订阅。</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 快速编辑弹窗：点击表格整行弹出，保存即生效（走 /api/logger/update 字段级更新，
+         改匹配值由后端自动换主键并保留命中计数）。各输入框按 Enter 等价于点「保存并生效」；
+         降维候选直接内联展示在弹窗内（无需二次弹窗），删除收在底部操作栏 -->
+    <div class="modal fade" id="cpQuickEditModal" tabindex="-1" aria-labelledby="cpQuickEditTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title h6" id="cpQuickEditTitle">✏️ 快速编辑规则</h3>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label for="cpQuickType" class="form-label small mb-1">类型</label>
+                        <input list="cpQuickTypeList" id="cpQuickType" class="form-control form-control-sm cp-mono"
+                               aria-label="规则类型" autocomplete="off">
+                        <datalist id="cpQuickTypeList"></datalist>
+                    </div>
+                    <div class="mb-2">
+                        <label for="cpQuickValue" class="form-label small mb-1">匹配值</label>
+                        <input id="cpQuickValue" class="form-control form-control-sm cp-mono" aria-label="匹配值"
+                               autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="mb-2">
+                        <label for="cpQuickPolicy" class="form-label small mb-1">策略</label>
+                        <input list="cpQuickPolicyList" id="cpQuickPolicy" class="form-control form-control-sm cp-mono"
+                               aria-label="策略" autocomplete="off">
+                        <datalist id="cpQuickPolicyList"></datalist>
+                    </div>
+                    <div class="mb-2">
+                        <label for="cpQuickParams" class="form-label small mb-1">参数（如 no-resolve,udp=true）</label>
+                        <input id="cpQuickParams" class="form-control form-control-sm cp-mono" aria-label="参数"
+                               autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="mb-2">
+                        <label for="cpQuickComment" class="form-label small mb-1">备注</label>
+                        <input id="cpQuickComment" class="form-control form-control-sm" aria-label="备注"
+                               autocomplete="off">
+                    </div>
+                    <p class="text-muted small mb-0" id="cpQuickMeta"></p>
+
+                    <!-- 降维候选：直接内联在编辑弹窗里，不再二次弹窗 -->
+                    <div class="mt-3 pt-2 border-top">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label small mb-0">🎯 降维建议（当前掩码或更粗网段，合并同类记录）</label>
+                            <span class="text-muted small">点「降维排除」立即生效</span>
+                        </div>
+                        <div id="cpQuickLevelList" class="d-flex flex-column gap-2"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <div class="me-auto">
+                        <button type="button" class="btn btn-sm btn-outline-danger"
+                                onclick="capturePanel.quickDelete()">🗑️ 删除</button>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="cpQuickSaveBtn"
+                            onclick="capturePanel.saveQuickEdit()">保存并生效</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导出筛选配置弹窗：来源 / 来源注释 / 命中次数；改动写入服务端，固定订阅地址立即按新条件输出 -->
+    <div class="modal fade" id="cpExportConfigModal" tabindex="-1" aria-labelledby="cpExportConfigTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title h6" id="cpExportConfigTitle">⚙️ 导出筛选配置</h3>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">
+                        条件保存在服务端并对固定订阅地址全局生效；Surge 端<b>不需要</b>更换订阅 URL。
+                    </p>
+                    <div class="mb-3">
+                        <label for="cpExportSource" class="form-label small mb-1">📱 按来源筛选</label>
+                        <select id="cpExportSource" class="form-select form-select-sm" aria-label="按来源筛选导出">
+                            <option value="">全部来源</option>
+                        </select>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="cpExportWithSource">
+                        <label class="form-check-label small" for="cpExportWithSource">导出时带来源注释</label>
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2 align-items-center cp-hit-filter">
+                        <span class="small text-muted">🔥 命中次数：</span>
+                        <div class="btn-group btn-group-sm" role="group" aria-label="命中次数快捷档位">
+                            <button type="button" class="btn btn-outline-secondary" id="cpMinCount10Btn"
+                                    onclick="capturePanel.setMinCount(10)">&gt;10</button>
+                            <button type="button" class="btn btn-outline-secondary" id="cpMinCount50Btn"
+                                    onclick="capturePanel.setMinCount(50)">&gt;50</button>
+                            <button type="button" class="btn btn-outline-secondary" id="cpMinCount100Btn"
+                                    onclick="capturePanel.setMinCount(100)">&gt;100</button>
+                        </div>
+                        <div class="input-group input-group-sm" style="width:auto;">
+                            <input type="number" class="form-control" id="cpMinCountCustom" min="1" step="1"
+                                   placeholder="自定义" style="width:100px;" aria-label="自定义命中次数下限">
+                            <button type="button" class="btn btn-outline-secondary" onclick="capturePanel.applyCustomMinCount()">应用</button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="cpMinCountClearBtn"
+                                onclick="capturePanel.clearMinCount()">✕ 清除</button>
+                        <span class="small text-muted" id="cpMinCountLabel"></span>
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2 align-items-center cp-time-filter">
+                        <span class="small text-muted">🕒 最近命中：</span>
+                        <div class="btn-group btn-group-sm" role="group" aria-label="最近命中时间快捷档位">
+                            <button type="button" class="btn btn-outline-secondary" id="cpLastDays10Btn"
+                                    onclick="capturePanel.setLastDays(10)">10 天</button>
+                            <button type="button" class="btn btn-outline-secondary" id="cpLastDays15Btn"
+                                    onclick="capturePanel.setLastDays(15)">15 天</button>
+                            <button type="button" class="btn btn-outline-secondary" id="cpLastDays30Btn"
+                                    onclick="capturePanel.setLastDays(30)">30 天</button>
+                            <button type="button" class="btn btn-outline-secondary" id="cpLastDays180Btn"
+                                    onclick="capturePanel.setLastDays(180)">180 天</button>
+                            <button type="button" class="btn btn-outline-secondary" id="cpLastDays360Btn"
+                                    onclick="capturePanel.setLastDays(360)">360 天</button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="cpLastDaysClearBtn"
+                                onclick="capturePanel.setLastDays(0)">✕ 清除</button>
+                        <span class="small text-muted" id="cpLastDaysLabel"></span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-primary" data-bs-dismiss="modal">完成</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 一键清空确认弹窗：高危不可逆操作，二次确认 -->
+    <div class="modal fade" id="cpWipeModal" tabindex="-1" aria-labelledby="cpWipeTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-danger">
+                <div class="modal-header bg-danger text-white">
+                    <h3 class="modal-title h6" id="cpWipeTitle">🗑️ 一键清空数据库</h3>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-danger fw-bold mb-2">高危操作：将删除规则表里的全部记录，并重置自增 ID，无法恢复。</p>
+                    <p class="mb-2">请确认你要清空 <span id="cpWipeCount">0</span> 条记录，并在下方输入 <code class="text-danger">CLEAR</code> 确认：</p>
+                    <input type="text" id="cpWipeInput" class="form-control" placeholder="输入 CLEAR 解锁按钮"
+                           oninput="capturePanel.onWipeInput()">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" id="cpWipeConfirmBtn" disabled
+                            onclick="capturePanel.confirmWipe()">确认清空</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 深度检测确认弹窗：说明将写入临时数据并立即删除 -->
+    <div class="modal fade" id="cpHealthDeepModal" tabindex="-1" aria-labelledby="cpHealthDeepTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title h6" id="cpHealthDeepTitle">🔬 深度检测确认</h3>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-2">深度检测会执行<b>写入探针</b>：向独立的 <code>health_probe</code> 表写入一行带唯一标记的临时数据，读回校验后在<b>同一事务内删除</b>，失败自动回滚，任何情况不留残留。</p>
+                    <p class="text-muted small mb-0">此外会校验写令牌与上报令牌（只做匹配检查，不落库），并模拟一次带令牌的合法探测上报。</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" onclick="capturePanel.runDeepConfirmed()">确认执行深度检测</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全局提示 -->
+    <div class="position-fixed top-0 start-50 translate-middle-x pt-3" style="z-index: 1080;">
+        <div id="toastContainer" class="d-flex flex-direction-column gap-2 align-items-center"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- 面板脚本以 ES Module 方式加载：main.js 入口，prefs-store 等模块按依赖自动引入。
+         ?v= 版本参数由 scripts/inject-version.mjs 随发版更新：入口带参数即让整张模块图
+         一起失效（发版即失效），浏览器对同参数请求命中缓存 -->
+    <script type="module" src="js/main.js?v=1.1.1"></script>
+    <!-- PWA 逻辑独立成模块：面板脚本即使初始化失败，SW 注册与安装入口也不受影响 -->
+    <script type="module" src="js/pwa.js?v=1.1.1"></script>
+</body>
+</html>

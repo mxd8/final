@@ -1,0 +1,16 @@
+# Cloudflare Pages 静态资源缓存策略（部署时随 dist 一起上传）
+#
+# 版本比对基准与入口引用绝不能被边缘/浏览器缓存：
+#   / 与 /index.html no-store —— 每次访问都新鲜，入口引用的 ?v= 版本参数是最新的
+#   /surge/*    max-age=300  —— Surge 三件套自托管源：版本参数保证发版即失效，
+#                               max-age 兜底防抖（双保险，替代 GitHub raw 的边缘缓存）
+# 其余静态资源维持 Pages 默认（etag 协商缓存），js/css 的更新由入口参数与
+# Service Worker 的 networkFirst 策略驱动，不做内容哈希重命名。
+/
+  Cache-Control: no-store
+
+/index.html
+  Cache-Control: no-store
+
+/surge/*
+  Cache-Control: public, max-age=300

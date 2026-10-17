@@ -1,0 +1,20 @@
+{
+  "name": "my-surge-manager",
+  "version": "1.1.1",
+  "description": "A simple surge manager with Cloudflare Pages and Functions",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "node scripts/inject-version.mjs && rm -rf dist && mkdir -p dist/surge && cp -R public/. dist/ && cp -R surge/. dist/surge/ && printf \"_worker.js\\n\" > dist/.assetsignore && npx wrangler pages functions build --outdir=dist --output-routes-path=dist/_routes.json --compatibility-date=2026-10-12 && mv dist/index.js dist/_worker.js && node scripts/patch-worker.mjs",
+    "deploy": "npx wrangler pages deploy ./dist --project-name=final --branch=main",
+    "preview": "npx wrangler pages dev ./dist --compatibility-date=2026-10-12 --proxy=8787",
+    "dev": "npm run build && concurrently \"node scripts/watch-public.mjs\" \"wrangler pages dev ./dist --compatibility-date=2026-10-12 --proxy=8787\"",
+    "test": "node tests/e2e.mjs && node tests/db-adapters.test.mjs && node tests/surge-scripts.test.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6",
+    "wrangler": "^4.151.1"
+  }
+}

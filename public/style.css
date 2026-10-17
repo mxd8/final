@@ -1,0 +1,566 @@
+/* ==========================================================================
+   iOS 液态玻璃主题（Liquid Glass，iOS 26/27 设计语言）
+   分层：设计令牌（深浅两套）→ Bootstrap 变量桥接 → 基础排版 → 组件材质。
+   组件只覆盖 Bootstrap 暴露的 CSS 变量，避免与 CDN 样式互相打架。
+   ========================================================================== */
+
+/* ------------------------------------------------ 浅色令牌 */
+:root {
+    /*
+     * 主题色令牌：nav.js 按用户选择写到根元素内联样式，这里是默认值（iOS 蓝）。
+     * 深色模式的取值用 -dark 后缀变量，切换 data-bs-theme 时自动换挡。
+     */
+    --cp-accent: #007aff;
+    --cp-accent-rgb: 0, 122, 255;
+    --cp-accent-text: #0064d2;
+    --cp-accent-dark: #0a84ff;
+    --cp-accent-dark-rgb: 10, 132, 255;
+    --cp-accent-dark-text: #409cff;
+
+    /* iOS 系统色板 */
+    --ios-blue: var(--cp-accent);
+    --ios-green: #34c759;
+    --ios-red: #ff3b30;
+    --ios-orange: #ff9500;
+    --ios-teal: #32ade6;
+    /* 着色文字：色板在浅底上的可读版本 */
+    --ios-blue-text: var(--cp-accent-text);
+    --ios-green-text: #1e8f3e;
+    --ios-red-text: #d70015;
+    --ios-orange-text: #b25000;
+    --ios-teal-text: #0d7683;
+
+    /* 玻璃材质 */
+    --ios-fill: rgba(120, 120, 128, 0.12);
+    --ios-fill-strong: rgba(120, 120, 128, 0.18);
+    --ios-card: rgba(255, 255, 255, 0.66);
+    --ios-card-strong: rgba(255, 255, 255, 0.88);
+    --ios-card-border: rgba(255, 255, 255, 0.7);
+    --ios-hairline: rgba(60, 60, 67, 0.16);
+    --ios-glass: blur(28px) saturate(1.8);
+    --ios-shadow: 0 10px 34px rgba(31, 41, 55, 0.09), 0 1px 2px rgba(0, 0, 0, 0.05);
+    --ios-shadow-strong: 0 24px 80px rgba(0, 0, 0, 0.28);
+    --ios-radius: 1.25rem;
+    --ios-radius-sm: 0.75rem;
+    --ios-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+    --ios-spring: cubic-bezier(0.34, 1.35, 0.64, 1);
+
+    /* Bootstrap 变量桥接 */
+    --bs-body-bg: #f2f2f7;
+    --bs-body-color: rgba(0, 0, 0, 0.86);
+    --bs-secondary-color: rgba(60, 60, 67, 0.6);
+    --bs-emphasis-color: #000;
+    --bs-primary: var(--ios-blue);
+    --bs-primary-rgb: var(--cp-accent-rgb);
+    --bs-success: var(--ios-green);
+    --bs-success-rgb: 52, 199, 89;
+    --bs-danger: var(--ios-red);
+    --bs-danger-rgb: 255, 59, 48;
+    --bs-warning: var(--ios-orange);
+    --bs-warning-rgb: 255, 149, 0;
+    --bs-info: var(--ios-teal);
+    --bs-info-rgb: 50, 173, 230;
+    --bs-border-color: var(--ios-hairline);
+    --bs-border-color-translucent: rgba(60, 60, 67, 0.1);
+    --bs-secondary-bg: #e9e9ee;
+    --bs-tertiary-bg: #f6f6f9;
+    --bs-link-color: var(--ios-blue);
+    --bs-link-hover-color: var(--ios-blue-text);
+    --bs-border-radius: var(--ios-radius-sm);
+    --bs-body-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+    --bs-body-font-size: 0.9375rem;
+}
+
+/* ------------------------------------------------ 深色令牌 */
+[data-bs-theme="dark"] {
+    --ios-blue: var(--cp-accent-dark);
+    --ios-green: #30d158;
+    --ios-red: #ff453a;
+    --ios-orange: #ff9f0a;
+    --ios-teal: #64d2ff;
+    --ios-blue-text: var(--cp-accent-dark-text);
+    --ios-green-text: #4cd964;
+    --ios-red-text: #ff6961;
+    --ios-orange-text: #ffb340;
+    --ios-teal-text: #64d2ff;
+
+    --ios-fill: rgba(120, 120, 128, 0.26);
+    --ios-fill-strong: rgba(120, 120, 128, 0.36);
+    --ios-card: rgba(28, 28, 30, 0.62);
+    --ios-card-strong: rgba(44, 44, 46, 0.88);
+    --ios-card-border: rgba(255, 255, 255, 0.12);
+    --ios-hairline: rgba(84, 84, 88, 0.6);
+    --ios-shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    --bs-body-bg: #000;
+    --bs-body-color: rgba(255, 255, 255, 0.9);
+    --bs-secondary-color: rgba(235, 235, 245, 0.62);
+    --bs-emphasis-color: #fff;
+    --bs-primary-rgb: var(--cp-accent-dark-rgb);
+    --bs-success-rgb: 48, 209, 88;
+    --bs-danger-rgb: 255, 69, 58;
+    --bs-warning-rgb: 255, 159, 10;
+    --bs-info-rgb: 100, 210, 255;
+    --bs-border-color-translucent: rgba(84, 84, 88, 0.45);
+    --bs-secondary-bg: #1c1c1e;
+    --bs-tertiary-bg: #2c2c2e;
+    --bs-link-color: #409cff;
+    --bs-link-hover-color: #6db2ff;
+}
+
+/* ------------------------------------------------ 基础排版 */
+body {
+    font-family: var(--bs-body-font-family);
+    background-color: var(--bs-body-bg);
+    color: var(--bs-body-color);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    min-height: 100vh;
+    /* PWA 独立模式：避开底部 Home 指示条；浏览器里 env 为 0 无影响 */
+    padding-bottom: env(safe-area-inset-bottom);
+    /* 环境光斑：给玻璃层提供可折射的底色 */
+    background-image:
+        radial-gradient(56rem 40rem at 12% -8%, rgba(var(--bs-primary-rgb), 0.12), transparent 60%),
+        radial-gradient(48rem 36rem at 92% -12%, rgba(94, 92, 230, 0.1), transparent 62%),
+        radial-gradient(52rem 36rem at 50% 112%, rgba(255, 45, 85, 0.06), transparent 60%);
+    background-attachment: fixed;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: var(--bs-emphasis-color);
+    font-weight: 680;
+    letter-spacing: -0.02em;
+}
+
+.container {
+    max-width: 1100px;
+}
+
+::selection {
+    background: rgba(var(--bs-primary-rgb), 0.22);
+}
+
+code {
+    color: var(--ios-blue-text);
+    background: var(--ios-fill);
+    border-radius: 0.4em;
+    padding: 0.15em 0.45em;
+}
+
+/* 细浮层滚动条 */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(134, 134, 142, 0.5) transparent;
+}
+::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(134, 134, 142, 0.45);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* ------------------------------------------------ 按钮 */
+.btn {
+    --bs-btn-border-radius: var(--ios-radius-sm);
+    --bs-btn-font-weight: 590;
+    --bs-btn-padding-y: 0.45rem;
+    --bs-btn-padding-x: 1.05rem;
+    border: 0;
+    letter-spacing: -0.01em;
+    transition: transform 0.18s var(--ios-ease), background-color 0.18s var(--ios-ease),
+        box-shadow 0.18s var(--ios-ease), color 0.18s var(--ios-ease), opacity 0.18s;
+}
+.btn:active {
+    transform: scale(0.96);
+}
+.btn:focus-visible {
+    box-shadow: 0 0 0 4px rgba(var(--bs-primary-rgb), 0.3) !important;
+    outline: none;
+}
+.btn-sm {
+    --bs-btn-border-radius: 0.65rem;
+    --bs-btn-padding-y: 0.3rem;
+    --bs-btn-padding-x: 0.72rem;
+}
+
+/* 实心按钮：系统填充色 + 同色柔光 */
+.btn-primary {
+    --bs-btn-bg: var(--ios-blue);
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-blue) 86%, #fff);
+    --bs-btn-active-bg: color-mix(in srgb, var(--ios-blue) 86%, #000);
+    --bs-btn-disabled-bg: var(--ios-blue);
+    box-shadow: 0 4px 14px rgba(var(--bs-primary-rgb), 0.32);
+}
+.btn-success {
+    --bs-btn-bg: var(--ios-green);
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-green) 86%, #fff);
+    --bs-btn-active-bg: color-mix(in srgb, var(--ios-green) 86%, #000);
+    --bs-btn-disabled-bg: var(--ios-green);
+    box-shadow: 0 4px 14px rgba(var(--bs-success-rgb), 0.32);
+}
+.btn-danger {
+    --bs-btn-bg: var(--ios-red);
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-red) 86%, #fff);
+    --bs-btn-active-bg: color-mix(in srgb, var(--ios-red) 86%, #000);
+    --bs-btn-disabled-bg: var(--ios-red);
+    box-shadow: 0 4px 14px rgba(var(--bs-danger-rgb), 0.32);
+}
+
+/* 着色玻璃按钮：iOS 的 tinted 样式，替代原生 outline */
+.btn-outline-primary,
+.btn-outline-success,
+.btn-outline-danger,
+.btn-outline-warning,
+.btn-outline-info,
+.btn-outline-secondary {
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-border-color: transparent;
+    --bs-btn-active-border-color: transparent;
+    --bs-btn-disabled-border-color: transparent;
+}
+.btn-outline-primary {
+    --bs-btn-color: var(--ios-blue-text);
+    --bs-btn-hover-color: var(--ios-blue-text);
+    --bs-btn-disabled-color: var(--ios-blue-text);
+    --bs-btn-bg: color-mix(in srgb, var(--ios-blue) 12%, transparent);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-blue) 20%, transparent);
+    --bs-btn-disabled-bg: color-mix(in srgb, var(--ios-blue) 12%, transparent);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--ios-blue);
+}
+.btn-outline-success {
+    --bs-btn-color: var(--ios-green-text);
+    --bs-btn-hover-color: var(--ios-green-text);
+    --bs-btn-disabled-color: var(--ios-green-text);
+    --bs-btn-bg: color-mix(in srgb, var(--ios-green) 14%, transparent);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-green) 22%, transparent);
+    --bs-btn-disabled-bg: color-mix(in srgb, var(--ios-green) 14%, transparent);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--ios-green);
+}
+.btn-outline-danger {
+    --bs-btn-color: var(--ios-red-text);
+    --bs-btn-hover-color: var(--ios-red-text);
+    --bs-btn-disabled-color: var(--ios-red-text);
+    --bs-btn-bg: color-mix(in srgb, var(--ios-red) 12%, transparent);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-red) 20%, transparent);
+    --bs-btn-disabled-bg: color-mix(in srgb, var(--ios-red) 12%, transparent);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--ios-red);
+}
+.btn-outline-warning {
+    --bs-btn-color: var(--ios-orange-text);
+    --bs-btn-hover-color: var(--ios-orange-text);
+    --bs-btn-disabled-color: var(--ios-orange-text);
+    --bs-btn-bg: color-mix(in srgb, var(--ios-orange) 14%, transparent);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-orange) 22%, transparent);
+    --bs-btn-disabled-bg: color-mix(in srgb, var(--ios-orange) 14%, transparent);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--ios-orange);
+}
+.btn-outline-info {
+    --bs-btn-color: var(--ios-teal-text);
+    --bs-btn-hover-color: var(--ios-teal-text);
+    --bs-btn-disabled-color: var(--ios-teal-text);
+    --bs-btn-bg: color-mix(in srgb, var(--ios-teal) 14%, transparent);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--ios-teal) 22%, transparent);
+    --bs-btn-disabled-bg: color-mix(in srgb, var(--ios-teal) 14%, transparent);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--ios-teal);
+}
+.btn-outline-secondary {
+    --bs-btn-color: var(--bs-secondary-color);
+    --bs-btn-hover-color: var(--bs-emphasis-color);
+    --bs-btn-active-color: var(--bs-emphasis-color);
+    --bs-btn-disabled-color: var(--bs-secondary-color);
+    --bs-btn-bg: var(--ios-fill);
+    --bs-btn-hover-bg: var(--ios-fill-strong);
+    --bs-btn-active-bg: var(--ios-fill-strong);
+    --bs-btn-disabled-bg: var(--ios-fill);
+}
+
+/* 分段控件：btn-group 变成 iOS segmented control */
+.btn-group {
+    background: var(--ios-fill);
+    border-radius: 0.9rem;
+    padding: 0.2rem;
+    gap: 0.15rem;
+}
+.btn-group > .btn {
+    border-radius: 0.68rem !important;
+    background-color: transparent;
+    box-shadow: none;
+    padding-inline: 0.9rem;
+}
+.btn-group > .btn:hover {
+    background-color: var(--ios-fill-strong);
+    color: var(--bs-emphasis-color);
+}
+.btn-group > .btn.active {
+    background-color: var(--bs-body-bg);
+    color: var(--bs-emphasis-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14), 0 0 0 0.5px var(--ios-hairline);
+}
+
+/* ------------------------------------------------ 表单 */
+.form-control,
+.form-select {
+    background-color: var(--ios-fill);
+    border-color: transparent;
+    border-radius: var(--ios-radius-sm);
+    color: var(--bs-body-color);
+    box-shadow: none;
+    transition: background-color 0.18s var(--ios-ease), border-color 0.18s var(--ios-ease),
+        box-shadow 0.18s var(--ios-ease);
+}
+.form-control::placeholder {
+    color: var(--bs-secondary-color);
+    opacity: 1;
+}
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--ios-card-strong);
+    border-color: rgba(var(--bs-primary-rgb), 0.55);
+    box-shadow: 0 0 0 4px rgba(var(--bs-primary-rgb), 0.16);
+    color: var(--bs-body-color);
+}
+.form-control:disabled,
+.form-select:disabled {
+    background-color: var(--ios-fill);
+    opacity: 0.6;
+}
+/* 统一下拉箭头：Bootstrap 默认箭头在深色下不可见 */
+.form-select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%238e8e93' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+    background-position: right 0.65rem center;
+    background-size: 0.72rem;
+    padding-right: 1.9rem;
+}
+.form-label {
+    font-weight: 590;
+}
+.form-check-input {
+    background-color: var(--ios-fill-strong);
+    border-color: transparent;
+}
+.form-check-input:checked {
+    background-color: var(--ios-green);
+    border-color: var(--ios-green);
+}
+.form-check-input:focus {
+    border-color: transparent;
+    box-shadow: 0 0 0 4px rgba(var(--bs-primary-rgb), 0.16);
+}
+.input-group {
+    border-radius: var(--ios-radius-sm);
+    overflow: hidden;
+    box-shadow: 0 0 0 1px var(--ios-hairline);
+}
+.input-group .form-control {
+    border: 0;
+    background-color: var(--ios-fill);
+}
+.input-group .form-control:focus {
+    box-shadow: none;
+    background-color: var(--ios-fill-strong);
+}
+
+/* ------------------------------------------------ 卡片（玻璃面板） */
+.card {
+    --bs-card-bg: var(--ios-card);
+    --bs-card-border-color: var(--ios-card-border);
+    --bs-card-border-radius: var(--ios-radius);
+    --bs-card-inner-border-radius: calc(var(--ios-radius) - 1px);
+    --bs-card-cap-bg: transparent;
+    --bs-card-cap-padding-x: 1.15rem;
+    --bs-card-cap-padding-y: 0.9rem;
+    --bs-card-spacer-x: 1.15rem;
+    --bs-card-spacer-y: 1.15rem;
+    backdrop-filter: var(--ios-glass);
+    -webkit-backdrop-filter: var(--ios-glass);
+    box-shadow: var(--ios-shadow);
+}
+.card-header {
+    border-bottom: 1px solid var(--bs-border-color-translucent);
+}
+.card-header h2 {
+    font-size: 1rem;
+    font-weight: 680;
+}
+
+/* ------------------------------------------------ 表格 */
+.table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--bs-body-color);
+    --bs-table-border-color: var(--bs-border-color-translucent);
+    --bs-table-hover-bg: rgba(var(--bs-primary-rgb), 0.06);
+    --bs-table-hover-color: var(--bs-body-color);
+    --bs-table-active-bg: rgba(var(--bs-primary-rgb), 0.1);
+    --bs-table-active-color: var(--bs-body-color);
+}
+
+/* ------------------------------------------------ 徽标 */
+.badge {
+    --bs-badge-border-radius: 999px;
+    --bs-badge-font-weight: 600;
+    padding: 0.42em 0.72em;
+}
+.badge.text-bg-secondary {
+    background-color: var(--ios-fill-strong) !important;
+    color: var(--bs-secondary-color) !important;
+}
+.badge.text-bg-light {
+    background-color: var(--ios-fill) !important;
+    color: var(--bs-secondary-color) !important;
+    border: 0 !important;
+}
+
+/* ------------------------------------------------ 通知（玻璃胶囊） */
+.alert {
+    --bs-alert-border-radius: 1.05rem;
+    --bs-alert-padding-x: 0.9rem;
+    --bs-alert-padding-y: 0.7rem;
+    border: 1px solid var(--ios-card-border);
+    backdrop-filter: blur(24px) saturate(1.6);
+    -webkit-backdrop-filter: blur(24px) saturate(1.6);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
+    animation: cp-toast-pop 0.32s var(--ios-spring);
+}
+.alert-secondary {
+    --bs-alert-color: var(--bs-body-color);
+    --bs-alert-bg: var(--ios-card-strong);
+    --bs-alert-border-color: var(--ios-card-border);
+}
+.alert-primary {
+    --bs-alert-color: var(--ios-blue-text);
+    --bs-alert-bg: rgba(var(--bs-primary-rgb), 0.14);
+    --bs-alert-border-color: rgba(var(--bs-primary-rgb), 0.28);
+}
+.alert-danger {
+    --bs-alert-color: var(--ios-red-text);
+    --bs-alert-bg: rgba(var(--bs-danger-rgb), 0.14);
+    --bs-alert-border-color: rgba(var(--bs-danger-rgb), 0.28);
+}
+.alert-success {
+    --bs-alert-color: var(--ios-green-text);
+    --bs-alert-bg: rgba(var(--bs-success-rgb), 0.15);
+    --bs-alert-border-color: rgba(var(--bs-success-rgb), 0.3);
+}
+.alert-warning {
+    --bs-alert-color: var(--ios-orange-text);
+    --bs-alert-bg: rgba(var(--bs-warning-rgb), 0.15);
+    --bs-alert-border-color: rgba(var(--bs-warning-rgb), 0.3);
+}
+.alert-info {
+    --bs-alert-color: var(--ios-teal-text);
+    --bs-alert-bg: rgba(var(--bs-info-rgb), 0.15);
+    --bs-alert-border-color: rgba(var(--bs-info-rgb), 0.3);
+}
+@keyframes cp-toast-pop {
+    from {
+        opacity: 0;
+        transform: translateY(-14px) scale(0.94);
+    }
+}
+
+/* ------------------------------------------------ 弹窗（玻璃浮层） */
+.modal-content {
+    background: var(--ios-card-strong);
+    backdrop-filter: blur(40px) saturate(1.8);
+    -webkit-backdrop-filter: blur(40px) saturate(1.8);
+    border: 1px solid var(--ios-card-border);
+    border-radius: 1.75rem;
+    box-shadow: var(--ios-shadow-strong);
+    overflow: hidden;
+}
+.modal-header,
+.modal-footer {
+    border-color: var(--bs-border-color-translucent);
+    padding-inline: 1.3rem;
+}
+.modal-body {
+    padding: 1.2rem 1.3rem;
+}
+.modal-backdrop {
+    --bs-backdrop-opacity: 0.3;
+}
+.modal-backdrop.show {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.modal.fade .modal-dialog {
+    transform: scale(0.92) translateY(14px);
+    opacity: 0;
+    transition: transform 0.4s var(--ios-spring), opacity 0.28s var(--ios-ease);
+}
+.modal.show .modal-dialog {
+    transform: none;
+    opacity: 1;
+}
+
+/* ------------------------------------------------ 下拉菜单 / 进度条 */
+.dropdown-menu {
+    --bs-dropdown-bg: var(--ios-card-strong);
+    --bs-dropdown-border-color: var(--ios-card-border);
+    --bs-dropdown-border-radius: 1rem;
+    --bs-dropdown-link-hover-bg: var(--ios-fill);
+    --bs-dropdown-link-hover-color: var(--bs-body-color);
+    --bs-dropdown-link-active-bg: rgba(var(--bs-primary-rgb), 0.14);
+    --bs-dropdown-link-active-color: var(--bs-primary);
+    --bs-dropdown-padding-y: 0.35rem;
+    backdrop-filter: blur(32px) saturate(1.8);
+    -webkit-backdrop-filter: blur(32px) saturate(1.8);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+}
+.dropdown-item {
+    margin: 0 0.35rem;
+    padding: 0.45rem 0.65rem;
+    border-radius: 0.55rem;
+}
+.progress {
+    --bs-progress-bg: var(--ios-fill);
+    --bs-progress-border-radius: 999px;
+    height: 0.55rem;
+}
+.progress-bar {
+    background: linear-gradient(90deg, var(--bs-primary), var(--bs-info));
+}
+
+/* ------------------------------------------------ 动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+   配置检测视图：检测项按序淡入（一次请求返回全部结果，前端按序动画展示）
+--------------------------------------------------------------------------- */
+@keyframes cpHealthItemIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.cp-health-item {
+    animation: cpHealthItemIn 0.28s ease-out both;
+}
+
+.cp-health-item details[open] {
+    border-top: 1px dashed var(--bs-border-color);
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+}

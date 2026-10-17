@@ -1,0 +1,321 @@
+/* ==========================================================================
+   面板布局（capture panel，前缀 cp-，避免与全局主题互相污染）
+   颜色与玻璃材质统一引用 style.css 的 --ios-* 令牌，这里只管布局与局部微调。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- 顶部导航 */
+
+/*
+ * 自定义 topbar：不用 Bootstrap navbar 组件，它的内边距与折叠断点不符合本页密度。
+ * 关键约束：这条栏不能加 overflow（hidden / auto），否则 dropdown 菜单会被裁。
+ */
+.cp-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 1020;
+    background: color-mix(in srgb, var(--bs-body-bg) 62%, transparent);
+    backdrop-filter: var(--ios-glass);
+    -webkit-backdrop-filter: var(--ios-glass);
+    border-bottom: 1px solid var(--bs-border-color-translucent);
+}
+.cp-topbar-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    /* PWA 独立模式下状态栏 / 刘海悬浮在内容上（status-bar-style: black-translucent），
+       用安全区 env 撑开内边距；浏览器标签页里 env 全为 0，行为不变 */
+    padding: max(0.55rem, env(safe-area-inset-top)) max(1.1rem, env(safe-area-inset-right)) 0.55rem max(1.1rem, env(safe-area-inset-left));
+}
+.cp-brand {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+}
+.cp-topbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/*
+ * topbar 的 z-index 高于 dropdown-menu 默认的 1000，菜单必须显式抬高才不会被盖住。
+ */
+.cp-topbar .dropdown-menu {
+    z-index: 1050;
+}
+
+/* ------------------------------------------------ 页面导航（顶部 / 底部共用按钮） */
+
+/* 顶栏导航行：iOS 分段式标签页，随主题色着色 */
+.cp-nav-top {
+    display: flex;
+    gap: 0.3rem;
+    overflow-x: auto;
+    padding: 0;
+    border-top: 0;
+    margin: 0;
+}
+.cp-nav-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex: none;
+    border: 0;
+    border-radius: 0.68rem;
+    padding: 0.34rem 0.85rem;
+    font-size: 0.82rem;
+    font-weight: 590;
+    color: var(--bs-secondary-color);
+    background: transparent;
+    transition: background-color 0.18s var(--ios-ease), color 0.18s var(--ios-ease);
+}
+.cp-nav-item:hover {
+    background: var(--ios-fill-strong);
+    color: var(--bs-emphasis-color);
+}
+/* ------------------------------------------------ 页面导航（顶部 / 底部共用按钮） */
+/* ... existing code ... */
+.cp-nav-item.active {
+    background: color-mix(in srgb, var(--ios-blue) 14%, transparent);
+    color: var(--ios-blue-text);
+}
+
+/* 移动端隐藏次要列：提升单手操作时的信息密度 */
+@media (max-width: 767px) {
+    .cp-col-params,
+    .cp-col-source,
+    .cp-col-time {
+        display: none !important;
+    }
+    .cp-rule-table {
+        font-size: 0.75rem;
+    }
+}
+
+/* 底部 TabBar：默认隐藏；设置页切到「底部导航」后 body.cp-nav-bottom 生效 */
+.cp-nav-bottom {
+    display: none;
+}
+/* ... existing code ... */
+body.cp-nav-bottom .cp-nav-bottom {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1035;
+    display: flex;
+    justify-content: space-around;
+    background: color-mix(in srgb, var(--bs-body-bg) 82%, transparent);
+    backdrop-filter: blur(20px) saturate(1.8);
+    -webkit-backdrop-filter: blur(20px) saturate(1.8);
+    border-top: 1px solid var(--bs-border-color-translucent);
+    padding-bottom: env(safe-area-inset-bottom);
+    height: calc(4.2rem + env(safe-area-inset-bottom));
+    align-items: center;
+}
+/* ... existing code ... */
+
+body.cp-nav-bottom main.cp-pages {
+    padding-bottom: calc(4.6rem + env(safe-area-inset-bottom));
+}
+.cp-nav-bottom .cp-nav-item {
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.45rem 0.9rem 0.35rem;
+    border-radius: 0.9rem;
+    min-width: 4.4rem;
+}
+.cp-nav-bottom .cp-nav-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+}
+.cp-nav-bottom .cp-nav-label {
+    font-size: 0.68rem;
+    letter-spacing: 0;
+}
+
+/* 订阅来源行：批量覆盖卡顶部的「从订阅填充」 */
+.cp-sub-source-row {
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--bs-border-color-translucent);
+}
+
+/* 订阅解析弹窗里的结果清单 */
+.cp-sub-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+.cp-sub-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.55rem 0.7rem;
+    background: var(--ios-fill);
+    border-radius: 0.9rem;
+}
+.cp-sub-item-info {
+    flex: 1 1 260px;
+    min-width: 0;
+    word-break: break-all;
+}
+.cp-sub-item-actions {
+    display: flex;
+    gap: 0.35rem;
+}
+
+/* 命中过滤区 */
+.cp-hit-filter {
+    padding-bottom: 0.35rem;
+}
+
+/*
+ * 导出摘要行：等宽数字保证「12 条 / 340 次」在多次刷新时不会左右跳动，
+ * aria-live=polite 让读屏软件在统计变化时播报一次。
+ */
+.cp-export-summary {
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
+}
+.cp-export-summary code {
+    color: var(--ios-blue-text);
+}
+
+/* 规则表：订阅规则列表与 FINAL 捕获记录合并成一张表 */
+.cp-rule-table {
+    font-size: 0.8rem;
+}
+.cp-rule-table th {
+    white-space: nowrap;
+    font-size: 0.7rem;
+    font-weight: 620;
+    color: var(--bs-secondary-color);
+    padding: 0.65rem 0.6rem;
+}
+.cp-rule-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: color-mix(in srgb, var(--bs-body-bg) 82%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+.cp-rule-table td {
+    vertical-align: middle;
+    padding: 0.45rem 0.6rem;
+}
+.cp-rule-table tbody tr {
+    transition: background-color 0.15s var(--ios-ease);
+}
+.cp-rule-table .cp-mono {
+    word-break: break-all;
+    max-width: 220px;
+}
+.cp-rule-table tbody tr[data-hostname] td {
+    cursor: pointer;
+}
+.cp-rule-table tbody tr[data-hostname]:hover td:first-child {
+    box-shadow: inset 2.5px 0 0 var(--ios-blue);
+}
+
+/* 参数徽标：多个参数并排，超出时自动换行 */
+.cp-rule-table .badge {
+    font-size: 0.68rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* 规则表所在卡片允许横向滚动，小屏不被挤压 */
+.cp-rule-table .table-responsive {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* 统计卡：玻璃面板之内的子卡用填充材质，避免玻璃叠玻璃 */
+.cp-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+    padding: 0.85rem;
+}
+@media (min-width: 768px) {
+    .cp-stats {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+.cp-stat {
+    border: 0;
+    border-radius: 0.95rem;
+    background: var(--ios-fill);
+    box-shadow: none;
+    padding: 0.7rem 0.8rem;
+}
+.cp-stat .label {
+    font-size: 0.72rem;
+    color: var(--bs-secondary-color);
+    line-height: 1.2;
+}
+.cp-stat .value {
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+}
+
+.cp-page-info {
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 等宽字体：只定字体，底色交给 form-control / 所在场景自己处理 */
+.cp-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+}
+
+/* 策略徽标：颜色由 JS 内联注入，这里只统一胶囊形态 */
+.cp-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.42em 0.7em;
+    letter-spacing: 0.02em;
+}
+
+/* 降维弹窗 */
+.cp-level-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.7rem;
+    background: var(--ios-fill);
+    border-radius: 0.8rem;
+    font-size: 0.78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    word-break: break-all;
+    margin-bottom: 0.4rem;
+}
+.cp-level-info {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.cp-level-info small {
+    color: var(--bs-secondary-color);
+    font-family: var(--bs-body-font-family);
+}
+
+/* 通知里的错误详情块 */
+.cp-error-detail {
+    background: var(--ios-fill);
+    border-radius: 0.5rem;
+    padding: 0.45rem 0.55rem;
+    font-size: 0.72rem;
+    max-height: 180px;
+    overflow: auto;
+}
