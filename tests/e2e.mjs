@@ -1418,27 +1418,38 @@ console.log('\n[health] 基础与深度检测');
   check('无失败项时汇总为 warn 或 pass', ['warn', 'pass'].includes(basicData.summary.overall));
   check('逐项携带耗时与文档锚点', basicData.checks.every((c) => Number.isFinite(c.ms) && typeof c.doc === 'string'));
 
-  const deep = await call(healthHandler, '/api/health?mode=deep');
+  const deep = await call(healthHandler, '/api/health?mode=deep&confirm=1');
   const deepData = (await deep.json()).data;
   check('深度检测执行写探针三步', ['5', '6', '7'].every((id) => deepData.checks.find((c) => c.id === Number(id)).status === 'pass'), JSON.stringify(deepData.checks.map((c) => `${c.id}:${c.status}`)));
   check('深度检测无失败项', deepData.summary.counts.fail === 0, deepData.summary.headline);
   const residue = db.prepare('SELECT COUNT(*) AS n FROM health_probe').get();
   check('探针表无残留数据', Number(residue.n) === 0, JSON.stringify(residue));
 
+  // v1.5 诊断分类升级：响应带分类视图 / 全链路自证 / 版本监控
+  check('深度检测响应带分类视图', Array.isArray(deepData.categories) && deepData.categories.length === 4, JSON.stringify(deepData.categories?.map((c) => c.id)));
+  check('全链路自证四段齐全', ['browser', 'pages', 'database', 'surge'].every((key) => deepData.chain?.[key]));
+  const versionCheck = deepData.checks.find((c) => c.id === 11);
+  check('版本与更新监控携带分发通道', versionCheck && versionCheck.distribution && typeof versionCheck.distribution.origin === 'string', JSON.stringify(versionCheck?.distribution));
+  check('分类视图汇总与平铺一致', deepData.categories.every((c) => c.checks.every((id) => deepData.checks.some((item) => item.id === id))));
+
+  // 深度检测必须显式二次确认（写副作用保护）：缺 confirm=1 返回 400
+  const noConfirm = await call(healthHandler, '/api/health?mode=deep');
+  check('深度检测缺二次确认返回 400', noConfirm.status === 400, String(noConfirm.status));
+
   // 深度检测节流：同 IP 每分钟至多一次
-  const throttled = await call(healthHandler, '/api/health?mode=deep');
+  const throttled = await call(healthHandler, '/api/health?mode=deep&confirm=1');
   check('深度检测按 IP 节流返回 429', throttled.status === 429);
 
   // 配置写令牌后，深度检测必须携带正确令牌；用不同来源 IP 避开上一段的节流槽位
   const securedEnv = { ...env, PANEL_WRITE_TOKEN: 'sec-health' };
   const denied = await healthHandler({
-    request: new Request('http://test/api/health?mode=deep', { headers: { 'cf-connecting-ip': 'ip-auth', authorization: 'Bearer hit-token' } }),
+    request: new Request('http://test/api/health?mode=deep&confirm=1', { headers: { 'cf-connecting-ip': 'ip-auth', authorization: 'Bearer hit-token' } }),
     env: securedEnv,
     waitUntil: () => {}
   });
   check('深度检测缺写令牌返回 401', denied.status === 401);
   const ok = await healthHandler({
-    request: new Request('http://test/api/health?mode=deep', { headers: { 'cf-connecting-ip': 'ip-auth', authorization: 'Bearer sec-health' } }),
+    request: new Request('http://test/api/health?mode=deep&confirm=1', { headers: { 'cf-connecting-ip': 'ip-auth', authorization: 'Bearer sec-health' } }),
     env: securedEnv,
     waitUntil: () => {}
   });
@@ -1664,6 +1675,236 @@ console.log('\n[ai] 批量分流闭环（✏️ 优先 / 保护 / 冷却 / 异�
   }
 }
 
+/* ---------------- 多用户鉴权体系：/api/auth + /api/users + /api/groups ---------------- */
+console.log('\n[auth] 管理员引导、登录会话与匿名写拒绝');
+const { onRequest: usersHandler } = await import(fileURLToPath(new URL('../functions/api/users.js', import.meta.url)));
+const { onRequest: authHandler } = await import(fileURLToPath(new URL('../functions/api/auth.js', import.meta.url)));
+{
+  // 引导：users 表为空时创建首个管理员并直接签发会话
+  const boot = await call(authHandler, '/api/auth/bootstrap', { method: 'POST', body: { username: 'root', password: 'root-pass-123', displayName: 'Root' } });
+  const bootData = (await boot.json()).data;
+  check('管理员引导成功并签发会话', boot.status === 200 && bootData?.token && bootData?.user?.role === 'admin', JSON.stringify(bootData));
+  const adminToken = bootData.token;
+
+  const bootAgain = await call(authHandler, '/api/auth/bootstrap', { method: 'POST', body: { username: 'root2', password: 'root-pass-123' } });
+  check('重复引导返回 409', bootAgain.status === 409);
+
+  const badLogin = await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'root', password: 'wrong-pass' } });
+  check('密码错误登录 401', badLogin.status === 401);
+
+  const login = await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'root', password: 'root-pass-123' } });
+  const loginData = (await login.json()).data;
+  check('正确密码登录签发会话', login.status === 200 && Boolean(loginData?.token));
+
+  const me = await call(authHandler, '/api/auth/me', { headers: { authorization: `Bearer ${adminToken}` } });
+  const meData = (await me.json()).data;
+  check('me 返回会话身份与管理员标记', meData?.authenticated === true && meData?.isAdmin === true && meData?.user?.username === 'root', JSON.stringify(meData));
+  const meAnon = await call(authHandler, '/api/auth/me', { headers: { authorization: 'Bearer none' } });
+  const meAnonData = (await meAnon.json()).data;
+  check('匿名 me：未认证但体系已启用', meAnonData?.authenticated === false && meAnonData?.authEnabled === true);
+  check('me 携带功能限制清单', typeof meData?.features === 'object' && 'ai.run' in meData.features);
+
+  // 鉴权启用后：匿名添加数据一律拒绝（核心安全约束）
+  const anonUpdate = await call(loggerHandler, '/api/logger/update', { method: 'POST', body: { hostname: 'a.com', policy: 'DIRECT' }, headers: { authorization: '' } });
+  check('匿名写操作 401（禁止匿名添加数据）', anonUpdate.status === 401, String(anonUpdate.status));
+  const anonHit = await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'anon.example' }, headers: { authorization: '' } });
+  check('匿名上报 401', anonHit.status === 401);
+  const reportWrite = await call(loggerHandler, '/api/logger/update', { method: 'POST', body: { hostname: 'a.com' } });
+  check('上报令牌不能执行面板写操作（403）', reportWrite.status === 403, String(reportWrite.status));
+  const anonList = await call(loggerHandler, '/api/logger');
+  check('匿名只读不受影响（订阅场景兼容）', anonList.status === 200);
+  const anonPrefs = await call(prefsHandler, '/api/prefs?user=dev1', { headers: { authorization: '' } });
+  check('匿名偏好读取被拒绝（gist.token 保护）', anonPrefs.status === 401, String(anonPrefs.status));
+
+  // 管理令牌身份：写令牌 = 管理员（外部脚本 / 定时器兼容路径）
+  const tokenEnv = { ...env, PANEL_WRITE_TOKEN: 'admin-op-token' };
+  const tokenWrite = await usersHandler({
+    request: new Request('http://test/api/users', { headers: { authorization: 'Bearer admin-op-token' } }),
+    env: tokenEnv,
+    waitUntil: () => {}
+  });
+  check('写令牌视同管理员访问用户清单', tokenWrite.status === 200, String(tokenWrite.status));
+}
+
+console.log('\n[users] 用户 CRUD、禁用与保护约束');
+const adminHeaders = async () => ({ authorization: `Bearer ${(await (await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'root', password: 'root-pass-123' } })).json()).data.token}` });
+{
+  const list = await call(usersHandler, '/api/users', { headers: await adminHeaders() });
+  const listData = (await list.json()).data;
+  check('管理员可列出用户与组', list.status === 200 && listData.users.length >= 1 && Array.isArray(listData.groups));
+  check('用户清单不含密码哈希', listData.users.every((user) => !('passwordHash' in user) && !('password_hash' in user)));
+
+  const created = await call(usersHandler, '/api/users', { method: 'POST', headers: await adminHeaders(), body: { username: 'alice', password: 'alice-pass-1', role: 'user', displayName: 'Alice' } });
+  const alice = (await created.json()).data;
+  check('创建普通用户', created.status === 201 && alice?.username === 'alice' && alice?.role === 'user');
+
+  const dup = await call(usersHandler, '/api/users', { method: 'POST', headers: await adminHeaders(), body: { username: 'alice', password: 'x-pass-123' } });
+  check('重名用户 400', dup.status === 400);
+  const badName = await call(usersHandler, '/api/users', { method: 'POST', headers: await adminHeaders(), body: { username: 'a', password: 'x-pass-123' } });
+  check('非法用户名 400', badName.status === 400);
+  const weakPass = await call(usersHandler, '/api/users', { method: 'POST', headers: await adminHeaders(), body: { username: 'shorty', password: '12345' } });
+  check('弱密码 400', weakPass.status === 400);
+
+  // 禁用 → 会话失效 + 登录 403
+  const aliceLogin = (await (await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'alice', password: 'alice-pass-1' } })).json()).data;
+  check('普通用户可登录', Boolean(aliceLogin?.token));
+  const aliceMe = await call(authHandler, '/api/auth/me', { headers: { authorization: `Bearer ${aliceLogin.token}` } });
+  check('普通用户 me：非管理员', (await aliceMe.json()).data?.isAdmin === false);
+
+  const disable = await call(usersHandler, `/api/users/${alice.id}`, { method: 'PATCH', headers: await adminHeaders(), body: { status: 'disabled' } });
+  check('禁用用户成功', disable.status === 200 && (await disable.json()).data?.status === 'disabled');
+  const disabledLogin = await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'alice', password: 'alice-pass-1' } });
+  check('禁用后登录 403', disabledLogin.status === 403);
+  const disabledSession = await call(authHandler, '/api/auth/me', { headers: { authorization: `Bearer ${aliceLogin.token}` } });
+  check('禁用后旧会话失效', (await disabledSession.json()).data?.authenticated === false);
+
+  // 保护约束：最后一个可用管理员不能停用 / 删除；不能删除自己
+  const rootUser = (await (await call(usersHandler, '/api/users', { headers: await adminHeaders() })).json()).data.users.find((user) => user.username === 'root');
+  const demote = await call(usersHandler, `/api/users/${rootUser.id}`, { method: 'PATCH', headers: await adminHeaders(), body: { status: 'disabled' } });
+  check('不能停用最后一个可用管理员', demote.status === 400, JSON.stringify(await demote.json()));
+  const selfDelete = await call(usersHandler, `/api/users/${rootUser.id}`, { method: 'DELETE', headers: await adminHeaders() });
+  check('不能删除当前登录账号', selfDelete.status === 400);
+
+  const del = await call(usersHandler, `/api/users/${alice.id}`, { method: 'DELETE', headers: await adminHeaders() });
+  check('删除用户成功', del.status === 200);
+  const afterDelete = (await (await call(usersHandler, '/api/users', { headers: await adminHeaders() })).json()).data.users;
+  check('用户清单不再包含已删除用户', afterDelete.every((user) => user.username !== 'alice'));
+}
+
+console.log('\n[groups] 用户组 CRUD 与成员解绑');
+{
+  const group = await call(usersHandler, '/api/groups', { method: 'POST', headers: await adminHeaders(), body: { name: 'family', description: '家里设备', features: { 'ai.run': 'deny' } } });
+  const groupData = (await group.json()).data;
+  check('创建用户组并写入功能限制', group.status === 201 && groupData?.name === 'family' && groupData?.permissions?.features?.['ai.run'] === 'deny');
+
+  const member = await call(usersHandler, '/api/users', { method: 'POST', headers: await adminHeaders(), body: { username: 'carol', password: 'carol-pass-1', groupId: groupData.id } });
+  const carol = (await member.json()).data;
+  check('创建归属组的用户', member.status === 201 && carol?.groupId === groupData.id);
+
+  const groupList = await call(usersHandler, '/api/groups', { headers: await adminHeaders() });
+  check('组清单带成员数', (await groupList.json()).data.some((g) => g.name === 'family' && g.memberCount === 1));
+
+  const renamed = await call(usersHandler, `/api/groups/${groupData.id}`, { method: 'PATCH', headers: await adminHeaders(), body: { name: 'family-2' } });
+  check('组重命名成功', renamed.status === 200 && (await renamed.json()).data?.name === 'family-2');
+
+  const removed = await call(usersHandler, `/api/groups/${groupData.id}`, { method: 'DELETE', headers: await adminHeaders() });
+  check('删除组返回解绑成员数', removed.status === 200 && (await removed.json()).data?.unboundMembers === 1);
+  const carolAfter = (await (await call(usersHandler, '/api/users', { headers: await adminHeaders() })).json()).data.users.find((user) => user.username === 'carol');
+  check('组成员解绑（用户保留）', carolAfter && carolAfter.groupId === null);
+}
+
+console.log('\n[policy] 功能级限制（AI 与功能限制扩展预留接口）');
+{
+  // 用户级 deny：普通用户 dave 被禁 logs.write
+  const dave = await call(usersHandler, '/api/users', { method: 'POST', headers: await adminHeaders(), body: { username: 'dave', password: 'dave-pass-1', features: { 'logs.write': 'deny' } } });
+  check('创建带功能限制的用户', dave.status === 201);
+  const daveLogin = (await (await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'dave', password: 'dave-pass-1' } })).json()).data;
+  const daveWrite = await call(loggerHandler, '/api/logger/update', { method: 'POST', headers: { authorization: `Bearer ${daveLogin.token}` }, body: { hostname: 'a.com', policy: 'DIRECT' } });
+  check('被禁用户写操作 403（功能限制生效）', daveWrite.status === 403, String(daveWrite.status));
+  const daveRead = await call(loggerHandler, '/api/logger');
+  check('只读不受功能限制影响', daveRead.status === 200);
+
+  // 动态策略注册表（预留接口）：注册 AI 检测类策略后判定即时生效
+  const { registerFeaturePolicy, unregisterFeaturePolicy, evaluateFeature } = await import('../functions/_utils/auth/policy.js');
+  registerFeaturePolicy('logs.write', async (principal) => (principal.user?.username === 'dave' ? { allowed: false, reason: 'ai-detection' } : null));
+  const davePrincipal = {
+    type: 'user',
+    user: { id: 99, username: 'dave', role: 'user', permissions: { features: { 'logs.write': 'deny' } } },
+    group: null
+  };
+  const dynamicVerdict = await evaluateFeature(davePrincipal, 'logs.write');
+  check('动态策略（预留接口）优先于静态规则', dynamicVerdict.allowed === false && dynamicVerdict.reason === 'ai-detection', JSON.stringify(dynamicVerdict));
+  unregisterFeaturePolicy('logs.write');
+  const staticVerdict = await evaluateFeature(davePrincipal, 'logs.write');
+  check('注销动态策略后回落静态规则（用户 deny）', staticVerdict.allowed === false && staticVerdict.reason === 'permission-deny');
+  const adminVerdict = await evaluateFeature({ type: 'user', user: { username: 'root', role: 'admin', permissions: {} }, group: null }, 'logs.write');
+  check('管理员不受功能限制', adminVerdict.allowed === true);
+}
+
+console.log('\n[auth] 改密与登出');
+{
+  const carolLogin1 = (await (await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'carol', password: 'carol-pass-1' } })).json()).data;
+  check('普通用户登录可建立会话', Boolean(carolLogin1?.token));
+  const badCurrent = await call(authHandler, '/api/auth/change-password', { method: 'POST', headers: { authorization: `Bearer ${carolLogin1.token}` }, body: { currentPassword: 'wrong', newPassword: 'carol-pass-2' } });
+  check('改密当前密码错误 401', badCurrent.status === 401);
+  const changed = await call(authHandler, '/api/auth/change-password', { method: 'POST', headers: { authorization: `Bearer ${carolLogin1.token}` }, body: { currentPassword: 'carol-pass-1', newPassword: 'carol-pass-2' } });
+  check('改密成功', changed.status === 200);
+  const oldPassword = await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'carol', password: 'carol-pass-1' } });
+  check('旧密码登录 401', oldPassword.status === 401);
+  const reLogin = (await (await call(authHandler, '/api/auth/login', { method: 'POST', body: { username: 'carol', password: 'carol-pass-2' } })).json()).data;
+  check('新密码登录成功', Boolean(reLogin?.token));
+  const out = await call(authHandler, '/api/auth/logout', { method: 'POST', headers: { authorization: `Bearer ${reLogin.token}` } });
+  check('登出成功', out.status === 200);
+  const afterLogout = await call(authHandler, '/api/auth/me', { headers: { authorization: `Bearer ${reLogin.token}` } });
+  check('登出后会话失效', (await afterLogout.json()).data?.authenticated === false);
+}
+
+/* ---------------- 设备五类型 profile 适配（A–E） ---------------- */
+console.log('\n[devices-type] 来源设备多维适配');
+{
+  // A（Surge iOS）：显式 deviceType + 平台专属参数
+  await call(loggerHandler, '/api/logger/hits', {
+    method: 'POST',
+    body: {
+      hits: [{ hostname: 'ios-device.example' }],
+      username: 'owner',
+      deviceType: 'surge-ios',
+      systemVersion: 'iOS 18.0',
+      surgeVersion: '5.20.0'
+    },
+    headers: { 'x-final-client': 'client-ios-a', 'x-final-device': 'iPhone 15 Pro', 'x-final-user': 'owner' }
+  });
+  // B（Surge Mac）：平台头
+  await call(loggerHandler, '/api/logger/stats', {
+    headers: {
+      'x-final-client': 'client-mac-b',
+      'x-final-device': 'MacBook Pro',
+      'x-final-user': 'owner',
+      'x-final-platform': 'surge-mac',
+      'x-final-system': 'macOS 15.0',
+      'x-final-version': '1.5.0',
+      'x-final-logger': '1.5.0'
+    }
+  });
+  // D（路由器插件）：插件版本映射 logger 参与检测
+  await call(loggerHandler, '/api/logger/hit', {
+    method: 'POST',
+    body: { hostname: 'router-hit.example', deviceType: 'router-plugin', pluginVersion: '1.2.0' },
+    headers: { 'x-final-device': 'OpenWrt', 'user-agent': 'curl/8.4.0' }
+  });
+  // E（纯 API / 无设备）：一次性单条 CRUD，不参与版本检测（生产环境服务端恒能取到来源 IP）
+  await call(loggerHandler, '/api/logger/hit', {
+    method: 'POST',
+    body: { hostname: 'api-only.example', deviceType: 'api-client' },
+    headers: { 'cf-connecting-ip': '203.0.113.77' }
+  });
+
+  const report = (await (await call(loggerHandler, '/api/logger/stats?with-clients=1')).json()).data;
+  const byClient = Object.fromEntries(report.devices.map((device) => [device.deviceId, device]));
+  const ios = byClient['client:client-ios-a'];
+  const mac = byClient['client:client-mac-b'];
+  const router = Object.values(byClient).find((device) => device.deviceType === 'router-plugin');
+  const apiClient = Object.values(byClient).find((device) => device.deviceType === 'api-client');
+
+  check('A（Surge iOS）识别为 surge-ios', ios?.deviceType === 'surge-ios' && ios?.typeCode === 'A', JSON.stringify(ios));
+  check('A 平台参数快照入库（系统版本 + Surge 版本）', ios?.platformParams?.systemVersion === 'iOS 18.0' && ios?.platformParams?.surgeVersion === '5.20.0', JSON.stringify(ios?.platformParams));
+  check('B（Surge Mac）识别为 surge-mac', mac?.deviceType === 'surge-mac' && mac?.typeCode === 'B');
+  check('D（路由器插件）识别且插件版本映射 logger', router?.deviceType === 'router-plugin' && router?.typeCode === 'D' && router?.loggerVersion === '1.2.0', JSON.stringify(router));
+  check('E（纯 API）识别且不产生「校验失败」告警', apiClient?.deviceType === 'api-client' && apiClient?.configStatus === 'latest' && report.deviceSummary.alerts.every((alert) => alert.deviceId !== 'client:api-client'), JSON.stringify(apiClient));
+
+  const iosOnly = (await (await call(loggerHandler, '/api/logger/stats?device-type=surge-ios')).json()).data;
+  check('检测隔离：device-type 过滤设备报表', iosOnly.devices.every((device) => device.deviceType === 'surge-ios') && iosOnly.devices.length >= 1);
+
+  // 诊断隔离：health 的客户端检测限定到单台设备
+  const scoped = await call(healthHandler, `/api/health?device-id=${encodeURIComponent('client:client-mac-b')}`);
+  const scopedData = (await scoped.json()).data;
+  const clientCheck = scopedData.checks.find((c) => c.id === 10);
+  check('诊断隔离：scope 单台设备生效', clientCheck.detail.includes('client:client-mac-b'), clientCheck.detail);
+  check('诊断响应回显 scope', scopedData.scope?.deviceId === 'client:client-mac-b');
+  const versionMonitor = scopedData.checks.find((c) => c.id === 11);
+  check('版本监控：携带分发通道与组件清单', Array.isArray(versionMonitor?.components) && typeof versionMonitor?.distribution?.origin === 'string', JSON.stringify(versionMonitor?.distribution));
+}
+
 /* ---------------- 路由回归保护 ---------------- */
 /*
  * 为什么这里要跑一次真实的 wrangler 构建：
@@ -1705,9 +1946,12 @@ console.log('\n[routes] _routes.json 覆盖所有接口');
       '/api/health', '/api/health/',
       '/api/prefs', '/api/prefs/schema',
       '/api/rules', '/api/rules/1',
+      '/api/auth', '/api/auth/bootstrap', '/api/auth/login', '/api/auth/logout', '/api/auth/me', '/api/auth/change-password',
+      '/api/users', '/api/users/1',
+      '/api/groups', '/api/groups/1',
       '/api/schema', '/api/schema/table/logger', '/api/schema/table/prefs',
       '/api/schema/table/subscriptions', '/api/schema/table/health', '/api/schema/table/heartbeats',
-      '/api/schema/table/devices',
+      '/api/schema/table/devices', '/api/schema/table/auth',
       '/api/subscribe', '/api/subscribe/parse', '/api/subscribe/save', '/api/subscribe/delete',
       '/api/subscribe/schema',
       '/api/ai', '/api/ai/config', '/api/ai/models', '/api/ai/test', '/api/ai/status', '/api/ai/run', '/api/ai/reset'

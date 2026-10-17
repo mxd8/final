@@ -12,8 +12,8 @@
  * 旧缓存在 activate 阶段整体清除；ENTRY_VERSION 与 index.html 的入口脚本
  * ?v= 参数同源，保证 SW 预缓存与页面实际引用的是同一份模块图。
  */
-const VERSION = 'v1.4.0-70e485e';
-const ENTRY_VERSION = '1.4.0';
+const VERSION = 'v1.5.0-b24265e';
+const ENTRY_VERSION = '1.5.0';
 const PRECACHE = `final-precache-${VERSION}`;
 const RUNTIME = `final-runtime-${VERSION}`;
 

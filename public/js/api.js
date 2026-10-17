@@ -4,12 +4,15 @@
 
 import { state, CP_CONFIG } from './config.js';
 import { getWriteToken } from './prefs-store.js';
+import { getSessionToken } from './auth.js';
 import { renderStats } from './render.js';
 import { renderAuthBanner } from './settings.js';
 import { renderVersionUi } from './version-check.js';
+import { populateHealthScope } from './health.js';
 
 /**
- * 写请求自动带令牌；读接口保持匿名可订阅。
+ * 写请求自动带鉴权：会话令牌优先（多用户体系），回落写接口令牌（兼容部署）。
+ * 读接口保持匿名可订阅。
  * x-panel-tz-offset 携带设备本地时区偏移（偏移值不含敏感信息，GET 也一起发）。
  */
 
@@ -36,7 +39,8 @@ export async function cpRequest(base, endpoint, { method = 'GET', body, timeoutM
     const headers = { 'x-panel-tz-offset': String(-new Date().getTimezoneOffset()) };
     if (method !== 'GET') {
         if (body) headers['Content-Type'] = 'application/json';
-        const token = getWriteToken();
+        const sessionToken = getSessionToken();
+        const token = sessionToken || getWriteToken();
         if (token) headers.Authorization = `Bearer ${token}`;
     }
 
@@ -101,6 +105,8 @@ export async function cpLoadStats() {
         const data = await cpRequest(CP_CONFIG.apiBase, '/stats');
         state.stats = data.data || null;
         renderStats();
+        // 设备清单到达后同步「配置检测」的隔离范围下拉框（检测项按需隔离）
+        populateHealthScope();
     } catch (error) {
         console.warn('[surge] 统计加载失败', error.message);
     }

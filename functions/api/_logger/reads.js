@@ -3,16 +3,18 @@
  */
 
 import { jsonResponse, textResponse } from '../../_utils/http.js';
-import { warningHeadersIfOpen, configuredWriteToken, anyConfiguredToken, extractToken, requireHitToken } from '../../_utils/auth.js';
+import { anyConfiguredToken, configuredWriteToken } from '../../_utils/auth.js';
+import { requireReportAuth, isAuthEnabled, readOnlyWarningHeaders } from '../../_utils/auth/principal.js';
 import { clientTzOffset } from '../../_utils/timezone.js';
 import { listLogs, getStats, describeExportFilter, summarizeExport, LOGS_SCHEMA } from '../../_utils/logs/index.js';
 import { ALL_RULE_TYPES, RULE_PARAMS, FLAG_PARAM_NAMES, KV_PARAM_NAMES, SURGE_POLICIES } from '../../_utils/surge-rule/index.js';
 import { buildExport, renderExportText } from './exporter.js';
 import { CACHE_OK, readMinCount, readLastDays } from './constants.js';
-import { BUILD_LABEL, COMPONENT_VERSIONS } from '../../_utils/build-meta.js';
+import { BUILD_LABEL, COMPONENT_VERSIONS, PANEL_ORIGIN } from '../../_utils/build-meta.js';
 import { DB_SCHEMA_VERSION } from '../../_utils/db/ddl.js';
 import { parseHeartbeatHeaders, recordHeartbeat, listHeartbeats } from '../../_utils/heartbeat.js';
 import { parseDeviceHeaders, touchDevice, getDevicesReport, clientIp } from '../../_utils/devices.js';
+import { resolveDeviceType, DEVICE_PROFILES } from '../../_utils/device-profiles.js';
 
 export async function handleList(context, config, url) {
   const logs = await listLogs(config, {
@@ -21,7 +23,10 @@ export async function handleList(context, config, url) {
     type: url.searchParams.get('type') || 'ALL',
     limit: url.searchParams.get('limit') || 5000
   });
-  return jsonResponse({ success: true, data: logs }, { headers: { ...CACHE_OK, ...warningHeadersIfOpen(context.env) } });
+  return jsonResponse(
+    { success: true, data: logs },
+    { headers: { ...CACHE_OK, ...readOnlyWarningHeaders(context.env, await isAuthEnabled(config)) } }
+  );
 }
 
 /**
@@ -31,6 +36,8 @@ export async function handleList(context, config, url) {
  *     健康检测、版本看板与首页来源设备视图共用这份数据；
  *   - 响应捎带 latest（各组件最新版本）、最近心跳清单与设备报表（含 n/m 在线
  *     统计与分级告警），网页与 Surge 面板零新增请求取数。
+ *   - 检测项按需隔离：?deviceId= / ?username= / ?device-type= 过滤设备报表
+ *     （诊断页对单台设备 / 单个用户独立检测）。
  * 心跳与设备登记失败绝不影响统计返回；带心跳头的请求是个性化响应，禁用共享缓存。
  */
 export async function handleStats(context, db, url) {
@@ -38,8 +45,8 @@ export async function handleStats(context, db, url) {
   const heartbeat = parseHeartbeatHeaders(context.request);
   const device = parseDeviceHeaders(context.request);
   if (heartbeat) {
-    const hitDenied = requireHitToken(context.env, extractToken(context.request));
-    if (hitDenied) {
+    const reportAuth = await requireReportAuth(context.env, db, context);
+    if (!reportAuth.ok) {
       heartbeatNote = 'heartbeat-auth-failed';
     } else {
       try {
@@ -50,7 +57,8 @@ export async function handleStats(context, db, url) {
       try {
         await touchDevice(db, {
           ...device,
-          ip: clientIp(context.request)
+          ip: clientIp(context.request),
+          deviceType: device.deviceType || resolveTypeQuietly(context.request)
         });
       } catch (error) {
         console.warn('[devices] 设备登记失败（不影响统计）:', error?.message ?? error);
@@ -67,15 +75,19 @@ export async function handleStats(context, db, url) {
       clients = [];
     }
   }
-  // 设备报表：清单 + 在线统计（n/m）+ 分级告警；失败回落空报表，统计数字照常返回
+  // 设备报表：清单 + 在线统计（n/m）+ 分级告警；支持设备类型 / 用户名隔离；失败回落空报表
   let devices = [];
   let deviceSummary = { total: 0, online: 0, alertCount: 0, alerts: [] };
   try {
-    ({ devices, deviceSummary } = await getDevicesReport(db, { limit: 100 }));
+    ({ devices, deviceSummary } = await getDevicesReport(db, {
+      limit: 100,
+      deviceType: url.searchParams.get('device-type') || '',
+      username: url.searchParams.get('username') || ''
+    }));
   } catch (error) {
     console.warn('[devices] 设备报表读取失败（不影响统计）:', error?.message ?? error);
   }
-  const headers = { ...(heartbeat ? { 'Cache-Control': 'no-store' } : CACHE_OK), ...warningHeadersIfOpen(context.env) };
+  const headers = { ...(heartbeat ? { 'Cache-Control': 'no-store' } : CACHE_OK), ...readOnlyWarningHeaders(context.env, await isAuthEnabled(db)) };
   return jsonResponse(
     {
       success: true,
@@ -91,6 +103,16 @@ export async function handleStats(context, db, url) {
     },
     { headers }
   );
+}
+
+/** 心跳路径的类型兜底：显式头没有时按型号 / UA 推断（复用 resolveDeviceType 的纯推断部分） */
+function resolveTypeQuietly(request) {
+  try {
+    const body = {};
+    return resolveDeviceType(request, body);
+  } catch {
+    return '';
+  }
 }
 
 export async function handleExport(context, config, url) {
@@ -114,7 +136,7 @@ export async function handleExport(context, config, url) {
       'X-Export-Count': String(result.count),
       'X-Export-IPv4': String(result.ipv4),
       'X-Export-IPv6': String(result.ipv6),
-      ...warningHeadersIfOpen(context.env)
+      ...readOnlyWarningHeaders(context.env, await isAuthEnabled(config))
     }
   });
 }
@@ -131,7 +153,7 @@ export async function handleExportSummary(context, config, url) {
   const summary = summarizeExport(result.matched);
   return jsonResponse(
     { success: true, data: { ...summary, filter: describeExportFilter({ type, source, minCount, lastDays }) } },
-    { headers: { ...CACHE_OK, ...warningHeadersIfOpen(context.env) } }
+    { headers: { ...CACHE_OK, ...readOnlyWarningHeaders(context.env, await isAuthEnabled(config)) } }
   );
 }
 
@@ -144,8 +166,11 @@ export async function handleSchema() {
  * 同时是版本握手的唯一出口：追加 version 清单（serverVersion / components /
  * dbSchemaVersion），作为三类客户端版本比对的唯一基准——响应 no-store，
  * 版本比对基准绝不能被边缘缓存。字段只增不删，旧客户端忽略未知字段不受影响。
+ * v4 追加：auth（多用户鉴权体系状态）、deviceTypes（五类型 profile 元数据）、
+ * distribution（Surge 三件套分发通道：Pages 自托管源 / 自定义域名）。
  */
-export async function handleMeta(context) {
+export async function handleMeta(context, config) {
+  const authEnabled = await isAuthEnabled(config);
   return jsonResponse(
     {
       success: true,
@@ -157,6 +182,21 @@ export async function handleMeta(context) {
         policies: SURGE_POLICIES,
         writeAuthRequired: Boolean(configuredWriteToken(context.env)),
         hitAuthRequired: Boolean(anyConfiguredToken(context.env)),
+        auth: {
+          enabled: authEnabled,
+          writeAuthRequired: Boolean(configuredWriteToken(context.env)),
+          hitAuthRequired: Boolean(anyConfiguredToken(context.env))
+        },
+        deviceTypes: Object.fromEntries(
+          Object.entries(DEVICE_PROFILES).map(([key, profile]) => [
+            key,
+            { code: profile.code, label: profile.label, versionDetection: profile.versionDetection, panelExpected: profile.panelExpected, tracked: profile.tracked }
+          ])
+        ),
+        distribution: {
+          channel: PANEL_ORIGIN ? 'pages' : 'self-host',
+          origin: PANEL_ORIGIN
+        },
         version: {
           serverVersion: BUILD_LABEL,
           components: COMPONENT_VERSIONS,
@@ -164,6 +204,6 @@ export async function handleMeta(context) {
         }
       }
     },
-    { headers: { 'Cache-Control': 'no-store', ...warningHeadersIfOpen(context.env) } }
+    { headers: { 'Cache-Control': 'no-store', ...readOnlyWarningHeaders(context.env, authEnabled) } }
   );
 }

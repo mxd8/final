@@ -54,6 +54,8 @@
             </div>
 
             <div class="cp-topbar-actions">
+                <!-- 会话徽标：多用户登录态（auth.js 渲染，点击跳转登录 / 用户页） -->
+                <button type="button" class="btn btn-outline-primary btn-sm" id="cpSessionChip">🚪 未登录</button>
                 <!-- 版本徽标：有可用更新时由 version-check.js 显示，点击跳设置页版本看板 -->
                 <button type="button" class="btn btn-outline-warning btn-sm" id="cpVersionBadge" hidden
                         aria-label="发现新版本，点击查看">🆙</button>
@@ -566,6 +568,44 @@ FINAL,PROXY,dns-failed"></textarea>
                     </p>
                 </div>
             </section>
+
+            <!-- 会话管理：当前登录账号、修改密码与退出（auth.js 渲染身份信息） -->
+            <section class="card mb-3" id="cpSessionCard" aria-labelledby="cpSessionTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpSessionTitle">🔑 会话与密码</h2>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted mb-2" id="cpSessionInfo">
+                        鉴权体系未启用或未登录：写操作将回落到写接口令牌鉴权。
+                    </p>
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-12 col-md-4">
+                            <label for="cpChangePasswordCurrent" class="form-label small mb-1">当前密码</label>
+                            <input type="password" id="cpChangePasswordCurrent" class="form-control form-control-sm" autocomplete="current-password">
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label for="cpChangePasswordNext" class="form-label small mb-1">新密码（至少 6 位）</label>
+                            <input type="password" id="cpChangePasswordNext" class="form-control form-control-sm" autocomplete="new-password">
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label for="cpChangePasswordConfirm" class="form-label small mb-1">确认新密码</label>
+                            <input type="password" id="cpChangePasswordConfirm" class="form-control form-control-sm" autocomplete="new-password">
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="capturePanel.changePassword()">💾 修改密码</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="capturePanel.logout()">🚪 退出登录</button>
+                    </div>
+                </div>
+            </section>
+        </section>
+
+        <!-- ============================================= 用户：多用户与权限管理（管理员） -->
+        <!-- 身份不足时本页展示登录 / 初始化引导；内容由 users.js 按 /api/auth/me 身份渲染 -->
+        <section id="cpPage-users" hidden>
+            <div id="cpUsersBody">
+                <div class="alert alert-secondary small">正在加载用户信息…</div>
+            </div>
         </section>
 
         <!-- ============================================= 设备检测：来源设备综合详情视图 -->
@@ -589,12 +629,21 @@ FINAL,PROXY,dns-failed"></textarea>
             <!-- 配置检测（原独立导航页整体并入）：部署健康检查 -->
             <section class="card mb-3" aria-labelledby="cpHealthTitle">
                 <div class="card-header">
-                    <h2 class="h5 mb-0" id="cpHealthTitle">🩺 配置检测</h2>
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h5 mb-0" id="cpHealthTitle">🩺 配置检测</h2>
+                        <!-- 检测项按需隔离：选定单台设备后，客户端与版本类检测只针对该设备执行 -->
+                        <select id="cpHealthScopeDevice" class="form-select form-select-sm" style="width:auto;"
+                                aria-label="选择检测隔离范围（单台设备）">
+                            <option value="">全部设备</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="card-body">
                     <p class="text-muted small mb-3">
-                        自证整套链路（浏览器 → Pages → 数据库 → Surge 客户端）是否已通。
-                        基础检测全部只读；深度检测会向独立的探针表写入一行临时数据并在同一事务内删除，需二次确认。
+                        自证整套链路（浏览器 → Pages → 数据库 → Surge 客户端）是否已通，检测项按
+                        <b>系统配置 / 数据库 / Surge 客户端 / 版本与更新</b> 分类展示。
+                        基础检测全部只读；深度检测会向独立的探针表写入一行临时数据并在同一事务内删除，需二次确认；
+                        也可用上方下拉框把检测隔离到单台设备。
                     </p>
                     <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
                         <button type="button" class="btn btn-success btn-sm" id="cpHealthBasicBtn"
@@ -846,6 +895,34 @@ FINAL,PROXY,dns-failed"></textarea>
         </div>
     </div>
 
+    <!-- 登录弹窗：多用户鉴权体系的账号密码登录（auth.js 处理提交与错误展示） -->
+    <div class="modal fade" id="cpLoginModal" tabindex="-1" aria-labelledby="cpLoginTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title h6" id="cpLoginTitle">🔑 登录面板</h3>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger py-2 px-3 small d-none mb-3" id="cpLoginError" role="alert"></div>
+                    <div class="mb-2">
+                        <label for="cpLoginUsername" class="form-label small mb-1">用户名</label>
+                        <input type="text" id="cpLoginUsername" class="form-control form-control-sm cp-mono" autocomplete="username">
+                    </div>
+                    <div class="mb-2">
+                        <label for="cpLoginPassword" class="form-label small mb-1">密码</label>
+                        <input type="password" id="cpLoginPassword" class="form-control form-control-sm" autocomplete="current-password">
+                    </div>
+                    <p class="text-muted small mb-0">会话有效期 7 天；写操作将以登录身份鉴权（禁止匿名添加数据）。</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="cpLoginSubmit">登录</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 全局提示 -->
     <div class="position-fixed top-0 start-50 translate-middle-x pt-3" style="z-index: 1080;">
         <div id="toastContainer" class="d-flex flex-direction-column gap-2 align-items-center"></div>
@@ -855,8 +932,8 @@ FINAL,PROXY,dns-failed"></textarea>
     <!-- 面板脚本以 ES Module 方式加载：main.js 入口，prefs-store 等模块按依赖自动引入。
          ?v= 版本参数由 scripts/inject-version.mjs 随发版更新：入口带参数即让整张模块图
          一起失效（发版即失效），浏览器对同参数请求命中缓存 -->
-    <script type="module" src="js/main.js?v=1.4.0"></script>
+    <script type="module" src="js/main.js?v=1.5.0"></script>
     <!-- PWA 逻辑独立成模块：面板脚本即使初始化失败，SW 注册与安装入口也不受影响 -->
-    <script type="module" src="js/pwa.js?v=1.4.0"></script>
+    <script type="module" src="js/pwa.js?v=1.5.0"></script>
 </body>
 </html>

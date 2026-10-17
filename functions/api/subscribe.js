@@ -13,15 +13,18 @@
 
 import { jsonResponse, notFound, methodNotAllowed, errorResponse } from '../_utils/http.js';
 import { resolveAdapter } from '../_utils/db/factory.js';
-import { requireWriteToken } from '../_utils/auth.js';
+import { requireMutationAuth } from '../_utils/auth/principal.js';
+import { requireFeature } from '../_utils/auth/policy.js';
 import { readJson, badRequest } from '../_utils/http.js';
 import { handleSchema, handleList, handleParse, handleSave, handleDelete } from './_subscribe/routes.js';
 import { TAG, READ_PATHS, WRITE_PATHS, normalizePath } from './_subscribe/constants.js';
 
-/** 写接口统一令牌校验 + 请求体解析，再分发到具体操作 */
+/** 写接口统一鉴权（会话 / 管理令牌；鉴权启用后匿名拒绝）+ 请求体解析，再分发到具体操作 */
 async function dispatchWrite(context, config, path) {
-  const denied = requireWriteToken(context.env, context.request);
-  if (denied) return denied;
+  const auth = await requireMutationAuth(context.env, config, context.request, context);
+  if (!auth.ok) return auth.response;
+  const featureDenied = await requireFeature(auth.principal, 'subscribe.manage', { path });
+  if (featureDenied) return featureDenied;
 
   const body = await readJson(context);
   if (!body.ok) return badRequest('请求体不是有效的 JSON');

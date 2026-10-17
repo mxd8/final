@@ -23,6 +23,10 @@
 import { DEVICES_TABLE, DEVICES_SCHEMA } from './db/ddl.js';
 import { normalizeSource, normalizeIp, normalizeUsername } from './logs/normalize.js';
 import { COMPONENT_VERSIONS } from './build-meta.js';
+import {
+  DEVICE_PROFILES, DEVICE_TYPE, versionInputsFor, serializePlatformParams, parsePlatformParams,
+  normalizeDeviceType
+} from './device-profiles.js';
 
 const MAX_DEVICE_ID_LENGTH = 96;
 const MAX_VERSION_LENGTH = 32;
@@ -92,15 +96,24 @@ const cleanHeader = (request, name) => String(request.headers.get(name) ?? '').t
  *   x-final-version  面板脚本版本（仅面板心跳携带）
  *   x-final-logger   捕获脚本版本（两条路径都携带）
  *   x-final-refresh  面板刷新间隔秒数（仅面板心跳携带，参与离线窗口计算）
+ *   x-final-platform 设备类型 key（v4：surge-ios / surge-mac / surge-ipad / …）
+ *   x-final-system   系统版本（v4 平台专属参数，如 iOS 17.4）
+ *   x-final-surge-version  Surge App 版本（A/B/C 设备专属）
+ *   x-final-plugin-version 插件版本（D 路由器插件专属，映射 logger 参与检测）
  */
 export function parseDeviceHeaders(request) {
+  const cleanParam = (name) => String(request.headers.get(name) ?? '').trim().slice(0, MAX_VERSION_LENGTH);
   return {
     clientId: cleanHeader(request, 'x-final-client').slice(0, MAX_DEVICE_ID_LENGTH),
     name: normalizeSource(request.headers.get('x-final-device')),
     username: normalizeUsername(request.headers.get('x-final-user')),
     panelVersion: cleanHeader(request, 'x-final-version'),
     loggerVersion: cleanHeader(request, 'x-final-logger'),
-    refreshSeconds: Math.max(0, Math.floor(Number(request.headers.get('x-final-refresh')) || 0))
+    refreshSeconds: Math.max(0, Math.floor(Number(request.headers.get('x-final-refresh')) || 0)),
+    deviceType: cleanParam('x-final-platform'),
+    systemVersion: cleanParam('x-final-system'),
+    surgeVersion: cleanParam('x-final-surge-version'),
+    pluginVersion: cleanParam('x-final-plugin-version')
   };
 }
 
@@ -131,9 +144,14 @@ export function isDeviceOnline(lastOnlineIso, refreshSeconds = 0, nowMs = Date.n
  * 设备触达：upsert 注册表并刷新最后上线时间。
  * 版本自报取「本次非空值，否则保留旧值」——面板与捕获脚本分别上报各自的版本，
  * 单次触达只带其中一半，合并后才能算出完整的 config_status。
+ * v4：device_type / platform_params 随触达更新（设备五类型多维适配）；
+ *     版本检测按 profile 执行——E（纯 API）不做检测，直接标记 latest（不产生告警）。
  * 失败由调用方吞掉：设备登记绝不能拖垮数据主链路。
  */
-export async function touchDevice(db, { clientId = '', name = '', username = '', ip = '', panelVersion = '', loggerVersion = '', refreshSeconds = 0 } = {}) {
+export async function touchDevice(db, {
+  clientId = '', name = '', username = '', ip = '', panelVersion = '', loggerVersion = '',
+  refreshSeconds = 0, deviceType = '', platformParams = null
+} = {}) {
   const deviceId = buildDeviceId({ clientId, name, username, ip });
   if (!deviceId || deviceId === 'dev:*|*|*') return null;
 
@@ -145,27 +163,45 @@ export async function touchDevice(db, { clientId = '', name = '', username = '',
   const deviceUsername = normalizeUsername(username);
   const deviceIp = normalizeIp(ip);
   const refresh = Math.max(0, Math.floor(Number(refreshSeconds) || 0));
+  const type = normalizeDeviceType(deviceType);
 
   // 先读旧版本自报再合并：单次触达只携带一个组件的版本，需要拼出完整视图
-  let previous = { panel_version: '', logger_version: '' };
+  let previous = { panel_version: '', logger_version: '', device_type: '', platform_params: '' };
   try {
     const [row] = await db.execute(
-      `SELECT panel_version, logger_version FROM ${DEVICES_TABLE} WHERE device_id = ?`,
+      `SELECT panel_version, logger_version, device_type, platform_params FROM ${DEVICES_TABLE} WHERE device_id = ?`,
       [deviceId]
     );
-    if (row) previous = { panel_version: String(row.panel_version ?? ''), logger_version: String(row.logger_version ?? '') };
+    if (row) {
+      previous = {
+        panel_version: String(row.panel_version ?? ''),
+        logger_version: String(row.logger_version ?? ''),
+        device_type: String(row.device_type ?? ''),
+        platform_params: String(row.platform_params ?? '')
+      };
+    }
   } catch {
     // 表尚未迁移好时按空处理：upsert 会自建行，下次触达自然补全
   }
 
   const mergedPanel = incomingPanel || previous.panel_version;
   const mergedLogger = incomingLogger || previous.logger_version;
-  const status = configStatusFromVersions(mergedPanel, mergedLogger);
+  const mergedType = type || previous.device_type;
+  const mergedParams = { ...parsePlatformParams(previous.platform_params), ...(platformParams ?? {}) };
+  // D（路由器插件）没有面板/捕获脚本版本：插件版本（平台参数）视作上报组件版本参与检测与展示
+  const effectiveLogger = mergedLogger
+    || (mergedType === DEVICE_TYPE.ROUTER_PLUGIN ? String(mergedParams.pluginVersion ?? '') : '');
+  const inputs = versionInputsFor(mergedType, {
+    panelVersion: mergedPanel, loggerVersion: effectiveLogger, platformParams: mergedParams
+  });
+  const status = inputs
+    ? configStatusFromVersions(inputs.panelVersion, inputs.loggerVersion)
+    : DEVICE_CONFIG_STATUS.LATEST; // E（纯 API）：无版本检测语义，不产生「校验失败」告警
 
   await db.batch([
     {
-      sql: `INSERT INTO ${DEVICES_TABLE} (device_id, name, username, ip, panel_version, logger_version, config_status, refresh_seconds, last_online_time, first_seen, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO ${DEVICES_TABLE} (device_id, name, username, ip, panel_version, logger_version, config_status, refresh_seconds, last_online_time, first_seen, updated_at, device_type, platform_params)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(device_id) DO UPDATE SET
               name = CASE WHEN excluded.name != '' THEN excluded.name ELSE ${DEVICES_TABLE}.name END,
               username = CASE WHEN excluded.username != '' THEN excluded.username ELSE ${DEVICES_TABLE}.username END,
@@ -175,21 +211,28 @@ export async function touchDevice(db, { clientId = '', name = '', username = '',
               config_status = excluded.config_status,
               refresh_seconds = CASE WHEN excluded.refresh_seconds > 0 THEN excluded.refresh_seconds ELSE ${DEVICES_TABLE}.refresh_seconds END,
               last_online_time = excluded.last_online_time,
-              updated_at = excluded.updated_at`,
-      params: [deviceId, deviceName, deviceUsername, deviceIp, mergedPanel, mergedLogger, status, refresh, now, now, now]
+              updated_at = excluded.updated_at,
+              device_type = excluded.device_type,
+              platform_params = excluded.platform_params`,
+      params: [
+        deviceId, deviceName, deviceUsername, deviceIp, mergedPanel, effectiveLogger, status,
+        refresh, now, now, now, mergedType, serializePlatformParams(mergedParams)
+      ]
     }
   ]);
 
   return { deviceId, configStatus: status };
 }
 
-/** 数据库行 → 前端结构（附在线判定与离线窗口） */
+/** 数据库行 → 前端结构（附在线判定、离线窗口与设备类型信息） */
 function normalizeDeviceRow(row, nowMs) {
   const name = String(row.name ?? '');
   const username = String(row.username ?? '');
   const ip = String(row.ip ?? '');
   const refreshSeconds = Math.max(0, Math.floor(Number(row.refresh_seconds) || 0));
   const lastOnlineTime = String(row.last_online_time ?? '');
+  const deviceType = String(row.device_type ?? '');
+  const profile = DEVICE_PROFILES[deviceType] ?? null;
   return {
     deviceId: String(row.device_id ?? ''),
     name,
@@ -203,23 +246,43 @@ function normalizeDeviceRow(row, nowMs) {
     firstSeen: String(row.first_seen ?? ''),
     updatedAt: String(row.updated_at ?? ''),
     online: isDeviceOnline(lastOnlineTime, refreshSeconds, nowMs),
-    offlineAfterMs: offlineWindowMs(refreshSeconds)
+    offlineAfterMs: offlineWindowMs(refreshSeconds),
+    deviceType,
+    typeCode: profile?.code ?? '',
+    typeLabel: profile?.label ?? (deviceType ? deviceType : '未标注'),
+    versionDetection: profile?.versionDetection ?? true,
+    platformParams: parsePlatformParams(row.platform_params)
   };
 }
 
 /** 设备清单（最近上线在前）：设备数远小于规则数，limit 100 足够面板展示 */
-export async function listDevices(db, { limit = 100 } = {}) {
+export async function listDevices(db, { limit = 100, deviceType = '', username = '' } = {}) {
   const nowMs = Date.now();
+  const filters = [];
+  const params = [];
+  if (deviceType) {
+    filters.push('device_type = ?');
+    params.push(normalizeDeviceType(deviceType));
+  }
+  if (username) {
+    filters.push('username = ?');
+    params.push(normalizeUsername(username));
+  }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  params.push(Math.max(1, Math.min(Number(limit) || 100, 500)));
   const rows = await db.execute(
-    `SELECT device_id, name, username, ip, panel_version, logger_version, config_status, refresh_seconds, last_online_time, first_seen, updated_at
-     FROM ${DEVICES_TABLE} ORDER BY last_online_time DESC LIMIT ?`,
-    [Math.max(1, Math.min(Number(limit) || 100, 500))]
+    `SELECT device_id, name, username, ip, panel_version, logger_version, config_status, refresh_seconds, last_online_time, first_seen, updated_at, device_type, platform_params
+     FROM ${DEVICES_TABLE} ${where} ORDER BY last_online_time DESC LIMIT ?`,
+    params
   );
   return rows.map((row) => normalizeDeviceRow(row, nowMs));
 }
 
-/** 单台设备的告警项（离线 / 配置过期 / 校验失败），无告警返回 null */
+/** 单台设备的告警项（离线 / 配置过期 / 校验失败），无告警返回 null。
+ *  版本类告警按 profile 隔离：E（纯 API）不参与版本检测，failed 不告警；
+ *  D（路由器插件）无面板预期，panel 缺失不触发 failed。 */
 function deviceAlert(device) {
+  const profile = DEVICE_PROFILES[device.deviceType] ?? null;
   if (!device.online) {
     return {
       deviceId: device.deviceId,
@@ -230,7 +293,7 @@ function deviceAlert(device) {
       message: '设备离线'
     };
   }
-  if (device.configStatus === DEVICE_CONFIG_STATUS.OUTDATED) {
+  if (device.configStatus === DEVICE_CONFIG_STATUS.OUTDATED && profile?.versionDetection !== false) {
     return {
       deviceId: device.deviceId,
       name: device.name || device.ip || device.deviceId,
@@ -240,7 +303,10 @@ function deviceAlert(device) {
       message: '配置过期：组件版本落后于服务端，请更新模块并重新另存捕获脚本'
     };
   }
-  if (device.configStatus === DEVICE_CONFIG_STATUS.FAILED) {
+  if (
+    device.configStatus === DEVICE_CONFIG_STATUS.FAILED &&
+    profile?.versionDetection !== false
+  ) {
     return {
       deviceId: device.deviceId,
       name: device.name || device.ip || device.deviceId,
@@ -275,9 +341,10 @@ export function deviceSummary(devices) {
 
 /**
  * 设备清单 + 汇总一次取齐：/stats 响应的 devices / deviceSummary 字段来源。
+ * 支持按设备类型 / 用户名隔离（诊断检测项按需隔离的数据面）。
  * 任何失败都回落空清单——设备视图缺席不影响统计主数据。
  */
-export async function getDevicesReport(db, { limit = 100 } = {}) {
-  const devices = await listDevices(db, { limit });
+export async function getDevicesReport(db, { limit = 100, deviceType = '', username = '' } = {}) {
+  const devices = await listDevices(db, { limit, deviceType, username });
   return { devices, deviceSummary: deviceSummary(devices) };
 }

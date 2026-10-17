@@ -43,18 +43,29 @@ function configBadge(device) {
     return `<span class="badge ${meta.badge}">${meta.icon} ${meta.label}</span>`;
 }
 
-/** 单台设备行：标识（用户名 + 型号 + IP）、在线 / 配置状态、版本与最后上线时间 */
+/** 单台设备行：标识（用户名 + 型号 + IP）、类型徽标（A–E）、在线 / 配置状态、版本与最后上线时间 */
 function deviceRowHtml(device) {
     const title = [device.username, device.name].filter(Boolean).join(' · ') || device.deviceId;
     const versions = [
         device.panelVersion ? `面板 ${cpEscape(device.panelVersion)}` : '面板版本未知',
         device.loggerVersion ? `捕获 ${cpEscape(device.loggerVersion)}` : '捕获版本未知'
     ].join(' · ');
+    // v1.5 设备五类型徽标：A Surge iOS / B Surge Mac / C Surge iPad / D 路由器插件 / E 纯 API
+    const typeBadge = device.typeCode
+        ? `<span class="badge text-bg-info" title="${cpEscape(device.typeLabel || '')}${device.versionDetection === false ? '（不参与版本检测）' : ''}">${cpEscape(device.typeCode)}·${cpEscape(device.typeLabel || '')}</span>`
+        : '';
+    const platformDetail = device.platformParams && typeof device.platformParams === 'object'
+        ? Object.entries(device.platformParams)
+            .filter(([key]) => key !== 'platform' && key !== 'model')
+            .map(([key, value]) => `${cpEscape(key)}=${cpEscape(String(value))}`)
+            .join(' ')
+        : '';
     return `
         <div class="cp-device-row d-flex flex-wrap justify-content-between align-items-start gap-2 py-2 border-bottom">
             <div class="flex-grow-1">
                 <div class="d-flex flex-wrap align-items-center gap-2">
                     <span class="fw-semibold small">📱 ${cpEscape(title)}</span>
+                    ${typeBadge}
                     ${onlineBadge(device)}
                     ${configBadge(device)}
                 </div>
@@ -62,6 +73,7 @@ function deviceRowHtml(device) {
                     🌐 来源 IP：<code>${device.ip ? cpEscape(device.ip) : '未知'}</code>
                     · ${versions}
                     · 最后上线：${cpEscape(formatTime(device.lastOnlineTime))}
+                    ${platformDetail ? ` · 平台参数：${platformDetail}` : ''}
                 </div>
             </div>
         </div>`;

@@ -85,10 +85,16 @@ CREATE TABLE IF NOT EXISTS devices (
     -- 最后上线时间（UTC ISO）：超过离线窗口无请求即判定离线
     last_online_time TEXT NOT NULL DEFAULT '',
     first_seen TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- v4 设备五类型：surge-ios / surge-mac / surge-ipad / router-plugin / api-client
+    -- （A iOS / B Mac / C iPad 参与版本检测；D 路由器插件按底层参数适配；E 纯 API 不做版本检测）
+    device_type TEXT NOT NULL DEFAULT '',
+    -- v4 平台专属参数快照（JSON）：systemVersion / surgeVersion / pluginVersion / model
+    platform_params TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_devices_online ON devices(last_online_time);
+CREATE INDEX IF NOT EXISTS idx_devices_type ON devices(device_type);
 
 -- ---------------------------------------------------------------------------
 -- 3. 用户偏好（前端个性化设置，跨设备同步）
@@ -149,6 +155,59 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 
+-- ---------------------------------------------------------------------------
+-- 6. 用户组（v4 多用户与权限体系）
+--    组级功能限制作为成员用户的默认值，用户级配置覆盖组级；
+--    permissions 存 JSON：{"features": {"ai.run": "deny", ...}}
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    permissions TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- 7. 用户账号（v4 多用户与权限体系）
+--    password_hash 为 PBKDF2-SHA256（格式 pbkdf2-sha256$迭代$盐$哈希，见
+--    functions/_utils/auth/password.js）；role = admin | user，
+--    status = active | disabled（禁用后全部会话失效）。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    group_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'active',
+    permissions TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_login_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id);
+
+-- ---------------------------------------------------------------------------
+-- 8. 面板登录会话（v4）
+--    token_hash 只存令牌的 SHA-256（原文仅登录响应返回一次），7 天过期；
+--    过期会话由登录 / 校验路径顺带清理。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
 
 -- ============================================================================
 -- 已有旧表时的迁移语句（新建库无需执行）
@@ -168,6 +227,11 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 --   ALTER TABLE surge_logs ADD COLUMN username TEXT NOT NULL DEFAULT ''; -- v2：用户名/用户组
 --   ALTER TABLE surge_logs ADD COLUMN manual_edited INTEGER NOT NULL DEFAULT 0; -- v3：✏️ 手动编辑标记
 --   ALTER TABLE surge_logs ADD COLUMN ai_processed INTEGER NOT NULL DEFAULT 0;  -- v3：AI 已处理标记
+--
+-- v4：设备类型多维度列 + 多用户三表（user_groups / users / auth_sessions 直接执行上文 CREATE 即可）：
+--   ALTER TABLE devices ADD COLUMN device_type TEXT NOT NULL DEFAULT '';      -- v4：设备五类型
+--   ALTER TABLE devices ADD COLUMN platform_params TEXT NOT NULL DEFAULT '';  -- v4：平台专属参数快照
+--   CREATE INDEX IF NOT EXISTS idx_devices_type ON devices(device_type);
 --
 -- v2 新增设备注册表（在线状态 / 配置告警），直接执行上文 devices 的 CREATE 语句即可
 --
