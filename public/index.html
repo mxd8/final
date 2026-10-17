@@ -79,10 +79,10 @@
 
         <!-- ============================================= 首页：统计 + 批量 + 导出 + 规则表 -->
         <section id="cpPage-home">
-            <!-- 实时统计 -->
+            <!-- 仪表盘：规则库实时统计 -->
             <section class="card mb-3" aria-labelledby="cpStatsTitle">
                 <div class="card-header">
-                    <h2 class="h5 mb-0" id="cpStatsTitle">📌 FINAL 实时统计</h2>
+                    <h2 class="h5 mb-0" id="cpStatsTitle">📊 仪表盘</h2>
                 </div>
                 <div class="card-body p-0">
                     <div class="cp-stats" id="cpStats">
@@ -97,6 +97,30 @@
                             <div class="label">来源设备</div><div class="value">-</div>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!--
+              Cloudflare 用量：服务端代理 GraphQL Analytics API，统计过去 24 小时的
+              Workers AI 调用量（请求 / Token / 模型分布）与 Workers 请求次数。
+              凭据复用「AI配置」页保存的连接（Account ID + API Token），
+              未配置或权限不足时卡片给出可操作的引导（usage.js 渲染）。
+            -->
+            <section class="card mb-3" aria-labelledby="cpUsageTitle">
+                <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <h2 class="h5 mb-0" id="cpUsageTitle">☁️ Cloudflare 用量</h2>
+                    <span class="small text-muted">过去 24 小时 · GraphQL Analytics API</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="cp-stats" id="cpUsageStats">
+                        <div class="cp-stat"><div class="label">AI 请求（24h）</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">AI Token（24h）</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">常用模型</div><div class="value">-</div></div>
+                        <div class="cp-stat"><div class="label">Workers 请求（24h）</div><div class="value">-</div></div>
+                    </div>
+                    <p class="small text-muted px-3 py-2 mb-0 border-top" id="cpUsageDetail" role="status" aria-live="polite">
+                        正在加载…
+                    </p>
                 </div>
             </section>
 
@@ -538,7 +562,7 @@ FINAL,PROXY,dns-failed"></textarea>
                 <div class="card-body">
                     <p class="small text-muted mb-0">
                         🧭 版本与更新、🩺 配置检测已整合到 <b>📱 设备检测</b> 综合视图：
-                        点击首页实时统计里的「来源设备」卡片进入，可同时查看多设备在线状态与配置告警。
+                        点击仪表盘里的「来源设备」卡片进入，可同时查看多设备在线状态与配置告警。
                     </p>
                 </div>
             </section>
@@ -831,8 +855,8 @@ FINAL,PROXY,dns-failed"></textarea>
     <!-- 面板脚本以 ES Module 方式加载：main.js 入口，prefs-store 等模块按依赖自动引入。
          ?v= 版本参数由 scripts/inject-version.mjs 随发版更新：入口带参数即让整张模块图
          一起失效（发版即失效），浏览器对同参数请求命中缓存 -->
-    <script type="module" src="js/main.js?v=1.3.0"></script>
+    <script type="module" src="js/main.js?v=1.4.0"></script>
     <!-- PWA 逻辑独立成模块：面板脚本即使初始化失败，SW 注册与安装入口也不受影响 -->
-    <script type="module" src="js/pwa.js?v=1.3.0"></script>
+    <script type="module" src="js/pwa.js?v=1.4.0"></script>
 </body>
 </html>

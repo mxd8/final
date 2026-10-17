@@ -18,6 +18,7 @@ import { openSubscribeModal, parseSubscriptions, reparseSubscription, deleteSubs
 import { saveGistConfig, uploadToGist, syncFromGist } from './sync.js';
 import { applyPreferences, setTheme, toggleTheme, savePrompt, saveOnlyEmptyPref, saveWriteToken } from './settings.js';
 import { aiSaveConnection, aiSaveSchedule, aiLoadModels, aiTestConnection, aiRefreshStatus, aiRunNow, aiResetProcessed, startAiScheduler } from './ai.js';
+import { wireUsageCard } from './usage.js';
 import { initVersionCheck } from './version-check.js';
 import { initHealthView, runHealthChecksBasic, runDeepConfirmed, copyHealthReport } from './health.js';
 import { setExportType, setMinCount, applyCustomMinCount, clearMinCount, setLastDays, onExportOptionChange, copyExportLink, copyPageDomains, restoreExportFilters, refreshExportSummary } from './export.js';
@@ -168,6 +169,8 @@ function initCapturedPanel() {
     initHealthView();
     // AI 分流自动化：前端调度器（面板打开期间按周期触发）+ AI 页面懒加载
     startAiScheduler();
+    // Cloudflare 用量卡：底部引导链接（未配置时跳 AI 配置页）
+    wireUsageCard();
     // 进入设备检测综合视图时用已加载的 stats 数据即时渲染设备面板（刷新后由 doRefreshAll 再刷新）
     document.addEventListener('cp:page', (event) => {
         if (event.detail === 'devices') renderDevicePanel();
