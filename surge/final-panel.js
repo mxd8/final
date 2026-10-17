@@ -69,7 +69,7 @@ var dbUrl = isHttps ? toApiUrl(rawUrl) : "";
 var webUrl = isHttps ? toWebUrl(rawUrl) : "";
 
 /** 脚本版本：随仓库发版注入（scripts/inject-version.mjs），上报与版本比对以此为准 */
-var SCRIPT_VERSION = "1.2.0";
+var SCRIPT_VERSION = "1.3.0";
 
 /** 把配置写入持久化，供本地部署的 final-logger 捕获脚本跨脚本读取（变更才落盘） */
 var CONFIG_KEY = "final_db_config";

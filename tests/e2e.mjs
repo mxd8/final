@@ -35,6 +35,7 @@ const { onRequest: schemaHandler } = await import(fileURLToPath(new URL('../func
 const { onRequest: subscribeHandler } = await import(fileURLToPath(new URL('../functions/api/subscribe.js', import.meta.url)));
 const { onRequest: exportHandler } = await import(fileURLToPath(new URL('../functions/api/export.js', import.meta.url)));
 const { onRequest: healthHandler } = await import(fileURLToPath(new URL('../functions/api/health.js', import.meta.url)));
+const { onRequest: aiHandler } = await import(fileURLToPath(new URL('../functions/api/ai.js', import.meta.url)));
 
 /**
  * 订阅解析要抓远程地址，测试里不能真联网，所以打桩 globalThis.fetch。
@@ -1483,6 +1484,186 @@ console.log('\n[schema] 健康探针 / 心跳 / 设备 / 版本表');
   check('未知表返回 404', (await call(schemaHandler, '/api/schema/table/nope')).status === 404);
 }
 
+/* ---------------- AI 分流自动化：/api/ai ---------------- */
+/*
+ * 全链路：Workers AI 凭据配置（token 掩码 / 保留语义 / 保留用户守卫）→
+ * 模型列表与连通性（打桩 CF API）→ 批量分流闭环（✏️ 优先与保护、注释只补空、
+ * ai_processed 排除、冷却与 force、解析失败与传输失败、单飞守卫、重置）。
+ */
+console.log('\n[ai] 配置读写与保留用户守卫');
+{
+  const defaults = (await (await call(aiHandler, '/api/ai/config')).json()).data;
+  check('默认配置回落安全值', defaults.model === '@cf/meta/llama-3.1-8b-instruct'
+    && defaults.enabled === false && defaults.hasToken === false && defaults.batchSize === 10, JSON.stringify(defaults));
+
+  check('prefs 接口拒绝读保留用户 system', (await call(prefsHandler, '/api/prefs?user=system')).status === 400);
+  check('prefs 接口拒绝写保留用户 system', (await call(prefsHandler, '/api/prefs', { method: 'POST', body: { user: 'system', settings: { 'ai.config': '{}' } } })).status === 400);
+  check('prefs 接口拒绝删保留用户 system', (await call(prefsHandler, '/api/prefs?user=system&key=ai.config', { method: 'DELETE' })).status === 400);
+
+  const saved = (await (await call(aiHandler, '/api/ai/config', {
+    method: 'POST',
+    body: { cfAccountId: 'acct123', cfApiToken: 'cf-token-abc123', model: '@cf/qwen/qwen1.5-14b-chat-awq' }
+  })).json()).data;
+  check('保存连接配置后 hasToken 为真', saved.hasToken === true && saved.tokenMask === '••••c123', JSON.stringify(saved));
+  check('token 原文不在响应里', !('cfApiToken' in saved) && !JSON.stringify(saved).includes('cf-token-abc123'), JSON.stringify(saved));
+
+  const kept = (await (await call(aiHandler, '/api/ai/config', { method: 'POST', body: { cfApiToken: '' } })).json()).data;
+  check('空 token 表示保留旧值', kept.hasToken === true && kept.tokenMask === '••••c123', JSON.stringify(kept));
+  const maskedBack = (await (await call(aiHandler, '/api/ai/config', { method: 'POST', body: { cfApiToken: '••••c123' } })).json()).data;
+  check('掩码回传不覆盖真实 token', maskedBack.hasToken === true, JSON.stringify(maskedBack));
+
+  const clamped = (await (await call(aiHandler, '/api/ai/config', {
+    method: 'POST',
+    body: { batchSize: 999, requestDelayMs: 999999, intervalMinutes: 1 }
+  })).json()).data;
+  check('调度参数越界被钳制', clamped.batchSize === 100 && clamped.requestDelayMs === 10000 && clamped.intervalMinutes === 5, JSON.stringify(clamped));
+
+  const schedule = (await (await call(aiHandler, '/api/ai/config', {
+    method: 'POST',
+    body: { enabled: true, intervalMinutes: 30, batchSize: 2, requestDelayMs: 0, onlyUnclassified: true, fillComment: true, priorityEdited: true }
+  })).json()).data;
+  check('调度设置保存生效', schedule.enabled === true && schedule.intervalMinutes === 30 && schedule.batchSize === 2, JSON.stringify(schedule));
+}
+
+console.log('\n[ai] 模型列表与连通性（打桩 CF API）');
+const CF_RUN_URL = 'https://api.cloudflare.com/client/v4/accounts/acct123/ai/run/@cf/qwen/qwen1.5-14b-chat-awq';
+{
+  fetchCases.set('https://api.cloudflare.com/client/v4/accounts/acct123/ai/models/search?per_page=100', () => Promise.resolve(Response.json({
+    success: true,
+    result: [
+      { name: '@cf/meta/llama-3.1-8b-instruct', task: { name: 'Text Generation' }, description: 'llama' },
+      { name: '@cf/qwen/qwen1.5-14b-chat-awq', task: { name: 'Text Generation' }, description: 'qwen' },
+      { name: '@cf/baai/bge-base-en-v1.5', task: { name: 'Text Embeddings' }, description: 'embedding' }
+    ]
+  })));
+  const models = (await (await call(aiHandler, '/api/ai/models')).json()).data;
+  check('模型列表只保留文本生成类', models.models.length === 2 && models.models.every((m) => m.name), JSON.stringify(models));
+  check('模型列表带当前默认模型', models.current === '@cf/qwen/qwen1.5-14b-chat-awq', models.current);
+
+  fetchCases.set(CF_RUN_URL, () => Promise.resolve(Response.json({ success: true, result: { response: '连通' } })));
+  const test = (await (await call(aiHandler, '/api/ai/test', { method: 'POST', body: {} })).json()).data;
+  check('连通性测试返回样例输出', test.model === '@cf/qwen/qwen1.5-14b-chat-awq' && test.sample === '连通', JSON.stringify(test));
+}
+
+console.log('\n[ai] 批量分流闭环（✏️ 优先 / 保护 / 冷却 / 异常）');
+{
+  // 换成动态 run 打桩：按请求体里的匹配值返回对应结论
+  const mapBasedFetch = globalThis.fetch;
+  let netBroken = false;
+  const aiRespond = (policy, comment) => Promise.resolve(Response.json({
+    success: true,
+    result: { response: `{"policy":"${policy}","comment":"${comment}"}` }
+  }));
+  globalThis.fetch = (input, init) => {
+    const target = typeof input === 'string' ? input : input.url;
+    if (target === CF_RUN_URL) {
+      const body = JSON.parse(init.body);
+      const userPrompt = body.messages.find((m) => m.role === 'user')?.content || '';
+      const host = (userPrompt.match(/匹配值：(.+)/) || [])[1]?.trim() || '';
+      if (host === 'badout.com') return Promise.resolve(Response.json({ success: true, result: { response: '这不是 JSON' } }));
+      if (netBroken && host.startsWith('net-')) return Promise.reject(new Error('deterministic failure'));
+      if (host.endsWith('reject.ai')) return aiRespond('REJECT', `拦截 ${host}`);
+      return aiRespond('DIRECT', `AI 备注 ${host}`);
+    }
+    return mapBasedFetch(input, init);
+  };
+
+  try {
+    await call(loggerHandler, '/api/logger/clear', { method: 'POST', body: { confirm: true } });
+    // 种子队列：
+    //   plain.com      未分流 + 无注释 → 正常处理（改策略 + 补注释）
+    //   edited.com     ✏️ 手动编辑（update 打标），策略 DIRECT → 优先处理，但策略不被改写，注释补全
+    //   hascomment.com 未分流 + 已有注释（batch 写入，不打 ✏️ 标记）→ 处理策略，注释不覆盖
+    //   other.com      已分流 + 有注释 → 不进队列
+    //   done.com       ai_processed=1 → 不进队列
+    await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'plain.com' } });
+    await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'edited.com' } });
+    await call(loggerHandler, '/api/logger/update', { method: 'POST', body: { hostname: 'edited.com', policy: 'DIRECT' } });
+    await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'hascomment.com' } });
+    await call(loggerHandler, '/api/logger/batch', { method: 'POST', body: { lines: [{ hostname: 'hascomment.com', comment: '已有备注' }] } });
+    await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'other.com', policy: 'DIRECT' } });
+    // merge 行必须自带 policy：缺失时按既有语义回落 PROXY 覆盖（Gist 还原场景的默认行为）
+    await call(loggerHandler, '/api/logger/batch', { method: 'POST', body: { lines: [{ hostname: 'other.com', policy: 'DIRECT', comment: '人工分流' }] } });
+    await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'done.com' } });
+    db.exec(`UPDATE surge_logs SET ai_processed = 1 WHERE hostname = 'done.com'`);
+
+    const status0 = (await (await call(aiHandler, '/api/ai/status')).json()).data;
+    check('队列统计：待处理 3、✏️ 优先 1', status0.queue.pending === 3 && status0.queue.pendingEdited === 1, JSON.stringify(status0.queue));
+
+    // 第一批（batchSize=2）：✏️ 规则必须排第一
+    const run1 = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: {} })).json()).data;
+    check('第一批处理 2 条且队列剩余 1', run1.skipped !== true && run1.summary.attempted === 2 && run1.summary.remaining === 1, JSON.stringify(run1));
+    {
+      const rows = db.prepare(`SELECT hostname, policy, comment, manual_edited, ai_processed FROM surge_logs WHERE hostname IN ('edited.com','plain.com','hascomment.com') ORDER BY ai_processed DESC`).all();
+      const edited = rows.find((r) => r.hostname === 'edited.com');
+      check('✏️ 规则第一批被优先处理', edited.ai_processed === 1, JSON.stringify(rows));
+      check('✏️ 规则的手动策略不被 AI 改写', edited.policy === 'DIRECT', JSON.stringify(edited));
+      check('✏️ 规则的空注释被补全', edited.comment === 'AI 备注 edited.com', JSON.stringify(edited));
+    }
+
+    // 队列没清空（remaining=1）→ 不进冷却，继续消化
+    const run2 = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: {} })).json()).data;
+    check('队列未清空时不冷却，第二批继续', run2.skipped !== true && run2.summary.attempted === 1 && run2.summary.remaining === 0, JSON.stringify(run2));
+
+    const after = (await list()).reduce((acc, item) => ({ ...acc, [item.hostname]: item }), {});
+    check('普通规则改策略 + 补注释', after['plain.com'].policy === 'DIRECT' && after['plain.com'].comment === 'AI 备注 plain.com', JSON.stringify(after['plain.com']));
+    check('已有注释不被覆盖、策略照常分流', after['hascomment.com'].policy === 'DIRECT' && after['hascomment.com'].comment === '已有备注', JSON.stringify(after['hascomment.com']));
+
+    // 队列清空后进入冷却
+    const run3 = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: {} })).json()).data;
+    check('队列清空后未到周期返回冷却跳过', run3.skipped === true && run3.reason === 'cooldown' && !!run3.nextRunAt, JSON.stringify(run3));
+
+    const status1 = (await (await call(aiHandler, '/api/ai/status')).json()).data;
+    check('状态接口给出下次可运行时间与上次摘要', !!status1.nextRunAt && status1.lastSummary?.attempted === 1, JSON.stringify(status1));
+
+    // 后续用例一批跑完（batchSize 回到常规值）
+    await call(aiHandler, '/api/ai/config', { method: 'POST', body: { batchSize: 10 } });
+
+    // 解析失败：输出不是 JSON → 标记已处理、不写字段、计 failed
+    await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'badout.com' } });
+    const runBad = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: { force: true } })).json()).data;
+    check('解析失败计 failed 且不中止', runBad.summary.failed === 1 && runBad.summary.attempted === 1, JSON.stringify(runBad));
+    const badRow = db.prepare(`SELECT policy, comment, ai_processed FROM surge_logs WHERE hostname = 'badout.com'`).get();
+    check('解析失败的规则不写策略与注释但标记已处理', badRow.policy === 'PROXY' && badRow.comment === '' && badRow.ai_processed === 1, JSON.stringify(badRow));
+
+    // 传输失败：连续 3 条 → 中止本轮且不标记，恢复后继续
+    for (const host of ['net-a.com', 'net-b.com', 'net-fail.com']) {
+      await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: host } });
+    }
+    netBroken = true;
+    const runNet = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: { force: true } })).json()).data;
+    check('连续传输失败中止本轮', runNet.summary.aborted === true && runNet.summary.errors === 3 && runNet.summary.attempted === 3, JSON.stringify(runNet));
+    check('传输失败的规则不标记已处理', db.prepare(`SELECT COUNT(*) AS n FROM surge_logs WHERE hostname LIKE 'net-%' AND ai_processed = 0`).get().n === 3);
+
+    // 中止后队列没清空 → 无需 force 也能继续（轮次延续语义），恢复打桩后消化成功
+    netBroken = false;
+    const runRecover = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: {} })).json()).data;
+    check('恢复后继续消化剩余队列', runRecover.skipped !== true && runRecover.summary.remaining === 0 && runRecover.summary.policyUpdated === 3, JSON.stringify(runRecover));
+
+    // 单飞守卫：running 标记在位时拒绝叠加执行（force 也不绕过）
+    db.exec(`INSERT INTO app_prefs (user_id, setting_key, setting_value, updated_at)
+             VALUES ('system', 'ai.state', '{"running":true,"running_since":"${new Date().toISOString()}"}', '${new Date().toISOString()}')
+             ON CONFLICT(user_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value`);
+    const runGuard = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: { force: true } })).json()).data;
+    check('running 标记在位时返回 skipped', runGuard.skipped === true && runGuard.reason === 'running', JSON.stringify(runGuard));
+    db.exec(`UPDATE app_prefs SET setting_value = '{"running":false}' WHERE user_id = 'system' AND setting_key = 'ai.state'`);
+
+    // 重置：清空 ai_processed，全部规则重新可调度
+    const resetRes = (await (await call(aiHandler, '/api/ai/reset', { method: 'POST', body: {} })).json()).data;
+    check('重置返回清除的标记数', resetRes.reset === 8, JSON.stringify(resetRes));
+    // 重置后只有「未分流或无注释」的规则回到队列（已分流的不再满足筛选条件）
+    check('重置后队列统计回升', ((await (await call(aiHandler, '/api/ai/status')).json()).data).queue.pending === 2);
+
+    // REJECT 分类的规则走同样回写路径（badout/done 会一并被重新处理）
+    await call(loggerHandler, '/api/logger/hit', { method: 'POST', body: { hostname: 'ads.reject.ai' } });
+    const runReject = (await (await call(aiHandler, '/api/ai/run', { method: 'POST', body: { force: true } })).json()).data;
+    check('AI 返回 REJECT 照常入库', runReject.summary.attempted === 3
+      && db.prepare(`SELECT policy FROM surge_logs WHERE hostname = 'ads.reject.ai'`).get().policy === 'REJECT', JSON.stringify(runReject));
+  } finally {
+    globalThis.fetch = mapBasedFetch;
+  }
+}
+
 /* ---------------- 路由回归保护 ---------------- */
 /*
  * 为什么这里要跑一次真实的 wrangler 构建：
@@ -1528,7 +1709,8 @@ console.log('\n[routes] _routes.json 覆盖所有接口');
       '/api/schema/table/subscriptions', '/api/schema/table/health', '/api/schema/table/heartbeats',
       '/api/schema/table/devices',
       '/api/subscribe', '/api/subscribe/parse', '/api/subscribe/save', '/api/subscribe/delete',
-      '/api/subscribe/schema'
+      '/api/subscribe/schema',
+      '/api/ai', '/api/ai/config', '/api/ai/models', '/api/ai/test', '/api/ai/status', '/api/ai/run', '/api/ai/reset'
     ];
     const uncovered = expected.filter((path) => !patterns.some((pattern) => isHit(pattern, path)));
     check('全部接口都能被 _routes.json 命中', uncovered.length === 0,

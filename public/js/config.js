@@ -5,6 +5,10 @@
 export const CP_CONFIG = {
     apiBase: '/api/logger',
     subscribeBase: '/api/subscribe',
+    // AI 分流自动化：配置 / 模型 / 状态 / 批量执行
+    aiBase: '/api/ai',
+    // 一批 = batchSize 条 ×（模型推理 + 条间间隔），最坏情形远超通用超时，单独放宽
+    aiRunTimeoutMs: 240000,
     timeoutMs: 15000,
     // 订阅解析：后端带重试总预算 30 秒，前端超时按 45 秒放宽，避免后端还在重试前端先断
     parseTimeoutMs: 45000,

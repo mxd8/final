@@ -5,9 +5,11 @@
 
 export const LOGS_TABLE = 'surge_logs';
 
-export const LOG_COLUMNS = 'id, hostname, type, value, policy, params, comment, source, ip, username, first_time, time, count';
+export const LOG_COLUMNS = 'id, hostname, type, value, policy, params, comment, source, ip, username, first_time, time, count, manual_edited, ai_processed';
 
-/** 写入列集合（INSERT 与 upsert 共用；comment 由字面空串占位，不在参数列） */
+/** 写入列集合（INSERT 与 upsert 共用；comment 由字面空串占位，不在参数列）。
+ *  manual_edited / ai_processed 不在其中：插入时走 NOT NULL DEFAULT 0，
+ *  仅由快速编辑保存（edit.js）与 AI 回写（api/_ai/executor.js）定向更新。 */
 export const WRITE_COLUMNS = 'hostname, type, value, policy, params, comment, source, ip, username, first_time, time, count';
 
 /** 单个批量事务最多多少条规则（每条 2 条语句）：控制往返数据量与事务锁时长 */
@@ -37,7 +39,9 @@ export const LOGS_SCHEMA = `CREATE TABLE IF NOT EXISTS ${LOGS_TABLE} (
   username TEXT NOT NULL DEFAULT '',
   first_time TEXT NOT NULL DEFAULT '',
   time TEXT NOT NULL,
-  count INTEGER NOT NULL DEFAULT 1
+  count INTEGER NOT NULL DEFAULT 1,
+  manual_edited INTEGER NOT NULL DEFAULT 0,
+  ai_processed INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_${LOGS_TABLE}_hostname ON ${LOGS_TABLE}(hostname);
 CREATE INDEX IF NOT EXISTS idx_${LOGS_TABLE}_time ON ${LOGS_TABLE}(time);

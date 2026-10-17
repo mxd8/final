@@ -12,8 +12,8 @@
  * 旧缓存在 activate 阶段整体清除；ENTRY_VERSION 与 index.html 的入口脚本
  * ?v= 参数同源，保证 SW 预缓存与页面实际引用的是同一份模块图。
  */
-const VERSION = 'v1.2.0-c2f65ac';
-const ENTRY_VERSION = '1.2.0';
+const VERSION = 'v1.3.0-1fdc95b';
+const ENTRY_VERSION = '1.3.0';
 const PRECACHE = `final-precache-${VERSION}`;
 const RUNTIME = `final-runtime-${VERSION}`;
 
@@ -32,6 +32,8 @@ const PRECACHE_URLS = [
     'icons/mono-512.png',
     'js/actions.js',
     'js/api.js',
+    // AI 分流自动化（配置页 + 前端调度器）
+    'js/ai.js',
     'js/clipboard.js',
     'js/config.js',
     'js/devices.js',

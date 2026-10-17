@@ -73,8 +73,8 @@ export async function renameLog(db, oldHostname, { newValue, type = 'UNSET', pol
   const results = await db.batch([
     { sql: `DELETE FROM ${LOGS_TABLE} WHERE hostname = ?`, params: [oldHostname] },
     {
-      sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS}, manual_edited)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       params: [newHostname, validType, newHostname, validPolicy, validParams, validComment, validSource, baseIp, baseUsername, baseFirst, baseTime, baseCount]
     }
   ]);
@@ -107,13 +107,14 @@ function buildFieldUpdateStatements(target, patched, fields) {
                 policy = CASE WHEN ? = 'UNSET' THEN policy ELSE ? END,
                 params = COALESCE(NULLIF(?, ''), params),
                 comment = COALESCE(NULLIF(?, ''), comment),
-                source = COALESCE(NULLIF(?, ''), source)
+                source = COALESCE(NULLIF(?, ''), source),
+                manual_edited = 1
             WHERE hostname = ?`,
       params: [typeText, validType, valueType, valueType === 'UNSET' ? '' : valueType, policyText, validPolicy, paramsText, commentText, sourceText, target]
     },
     {
-      sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS}, manual_edited)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
             ON CONFLICT(hostname) DO NOTHING`,
       params: [
         target,

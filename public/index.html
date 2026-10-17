@@ -309,6 +309,154 @@ FINAL,PROXY,dns-failed"></textarea>
                     </p>
                 </div>
             </section>
+
+            <!-- 🔌 Workers AI 连接配置 -->
+            <section class="card mb-3" aria-labelledby="cpAiConnTitle">
+                <div class="card-header">
+                    <h2 class="h5 mb-0" id="cpAiConnTitle">🔌 Cloudflare Workers AI 连接</h2>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 mb-2">
+                        <div class="col-12 col-md-6">
+                            <label for="cpAiAccountId" class="form-label small mb-1">Account ID</label>
+                            <input type="text" id="cpAiAccountId" class="form-control form-control-sm cp-mono"
+                                   autocomplete="off" placeholder="Cloudflare 仪表盘概览页右侧的 Account ID">
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label for="cpAiToken" class="form-label small mb-1">API Token</label>
+                            <input type="password" id="cpAiToken" class="form-control form-control-sm cp-mono"
+                                   autocomplete="new-password" placeholder="留空保持已保存的 Token 不变">
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label for="cpAiModel" class="form-label small mb-1">默认调用模型</label>
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <input list="cpAiModelList" id="cpAiModel" class="form-control form-control-sm cp-mono"
+                                   style="max-width: 420px" placeholder="@cf/meta/llama-3.1-8b-instruct">
+                            <datalist id="cpAiModelList"></datalist>
+                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                    onclick="capturePanel.aiLoadModels()">🔄 拉取模型列表</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                    onclick="capturePanel.aiTestConnection()">🧪 测试连接</button>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <button type="button" class="btn btn-sm btn-primary"
+                                onclick="capturePanel.aiSaveConnection()">💾 保存连接配置</button>
+                        <span id="cpAiConnStatus" class="small text-muted"></span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ⚙️ 自动化调度设置 -->
+            <section class="card mb-3" aria-labelledby="cpAiScheduleTitle">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h2 class="h5 mb-0" id="cpAiScheduleTitle">⚙️ 自动化调度</h2>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="cpAiEnabled">
+                        <label class="form-check-label small" for="cpAiEnabled">全局开关</label>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6 col-md-3">
+                            <label for="cpAiInterval" class="form-label small mb-1">执行周期</label>
+                            <select id="cpAiInterval" class="form-select form-select-sm">
+                                <option value="30">每 30 分钟</option>
+                                <option value="60">每 1 小时</option>
+                                <option value="180">每 3 小时</option>
+                                <option value="360">每 6 小时</option>
+                                <option value="720">每 12 小时</option>
+                                <option value="1440">每天一次</option>
+                                <option value="custom">自定义（分钟）</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-3" id="cpAiIntervalCustomWrap" hidden>
+                            <label for="cpAiIntervalCustom" class="form-label small mb-1">周期（分钟）</label>
+                            <input type="number" id="cpAiIntervalCustom" class="form-control form-control-sm"
+                                   min="5" max="10080" value="360">
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label for="cpAiBatchSize" class="form-label small mb-1">单次查询数量</label>
+                            <input type="number" id="cpAiBatchSize" class="form-control form-control-sm"
+                                   min="1" max="100" value="10">
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label for="cpAiDelay" class="form-label small mb-1">调用间隔（毫秒）</label>
+                            <input type="number" id="cpAiDelay" class="form-control form-control-sm"
+                                   min="0" max="10000" step="100" value="1000">
+                        </div>
+                    </div>
+                    <div class="d-flex flex-column gap-1 mb-3">
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="cpAiOnlyUnclassified">
+                            <label class="form-check-label small" for="cpAiOnlyUnclassified">
+                                处理「未分流」规则（策略仍为默认 PROXY 的条目）
+                            </label>
+                        </div>
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="cpAiFillComment">
+                            <label class="form-check-label small" for="cpAiFillComment">
+                                为「无注释」规则推断并补全备注（只补空，不覆盖已有注释）
+                            </label>
+                        </div>
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="cpAiPriorityEdited">
+                            <label class="form-check-label small" for="cpAiPriorityEdited">
+                                ✏️ 手动编辑过的规则优先调度，且 AI 不改写其分流策略
+                            </label>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <button type="button" class="btn btn-sm btn-primary"
+                                onclick="capturePanel.aiSaveSchedule()">💾 保存调度设置</button>
+                        <button type="button" class="btn btn-sm btn-success"
+                                onclick="capturePanel.aiRunNow()">▶️ 立即执行一轮</button>
+                        <span id="cpAiScheduleStatus" class="small text-muted"></span>
+                    </div>
+                    <p class="text-muted small mt-2 mb-0">
+                        💡 前端调度在面板打开期间按周期自动执行；7×24 无人值守请在「设置」页保存写接口令牌后，
+                        用外部定时器（cron-job.org / Cloudflare Worker / NAS crontab）按周期请求
+                        <code>POST /api/ai/run?token=写接口令牌</code>，端点内置冷却，两种方式不会重复触发。
+                    </p>
+                </div>
+            </section>
+
+            <!-- 📊 队列与运行状态 -->
+            <section class="card mb-3" aria-labelledby="cpAiStatusTitle">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h2 class="h5 mb-0" id="cpAiStatusTitle">📊 队列与运行状态</h2>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="capturePanel.aiRefreshStatus()">🔄 刷新</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger"
+                                onclick="capturePanel.aiResetProcessed()">♻️ 重置处理标记</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-4">
+                            <div class="border rounded p-2 text-center">
+                                <div class="h5 mb-0" id="cpAiQueuePending">—</div>
+                                <div class="small text-muted">待处理</div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="border rounded p-2 text-center">
+                                <div class="h5 mb-0" id="cpAiQueueEdited">—</div>
+                                <div class="small text-muted">✏️ 优先待处理</div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="border rounded p-2 text-center">
+                                <div class="h5 mb-0" id="cpAiQueueProcessed">—</div>
+                                <div class="small text-muted">AI 已处理</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="cpAiRunState" class="small text-muted">尚未运行过。</div>
+                </div>
+            </section>
         </section>
 
         <!-- ============================================= 设置：外观 / 云同步 / 写令牌 -->
@@ -683,8 +831,8 @@ FINAL,PROXY,dns-failed"></textarea>
     <!-- 面板脚本以 ES Module 方式加载：main.js 入口，prefs-store 等模块按依赖自动引入。
          ?v= 版本参数由 scripts/inject-version.mjs 随发版更新：入口带参数即让整张模块图
          一起失效（发版即失效），浏览器对同参数请求命中缓存 -->
-    <script type="module" src="js/main.js?v=1.2.0"></script>
+    <script type="module" src="js/main.js?v=1.3.0"></script>
     <!-- PWA 逻辑独立成模块：面板脚本即使初始化失败，SW 注册与安装入口也不受影响 -->
-    <script type="module" src="js/pwa.js?v=1.2.0"></script>
+    <script type="module" src="js/pwa.js?v=1.3.0"></script>
 </body>
 </html>

@@ -22,8 +22,16 @@ import {
   deletePref,
   clearPrefs
 } from '../_utils/prefs.js';
+import { AI_CONFIG_USER } from './_ai/config.js';
 
 const TAG = 'api/prefs';
+
+/** 保留用户守卫：system 用户存 AI 全局配置（含凭据），只允许 /api/ai/* 读写 */
+function guardReservedUser(user) {
+  return user === AI_CONFIG_USER
+    ? badRequest(`用户「${AI_CONFIG_USER}」为系统保留，AI 配置请通过 /api/ai 接口读写`)
+    : null;
+}
 
 export async function onRequest(context) {
   const { adapter: config, response } = await resolveAdapter(context.env);
@@ -56,6 +64,9 @@ async function list(context, config, url) {
   if (writeDenied) return writeDenied;
 
   const user = normalizeUserId(url.searchParams.get('user'));
+  const reserved = guardReservedUser(user);
+  if (reserved) return reserved;
+
   const settings = await listPrefs(config, user);
   return jsonResponse({ success: true, user, data: settings }, { headers: warningHeadersIfOpen(context.env) });
 }
@@ -68,6 +79,9 @@ async function save(context, config) {
   if (!body.ok) return badRequest('请求体不是有效的 JSON');
 
   const user = normalizeUserId(body.value.user);
+  const reserved = guardReservedUser(user);
+  if (reserved) return reserved;
+
   const settings = body.value.settings;
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
     return badRequest('settings 必须是对象');
@@ -83,6 +97,9 @@ async function remove(context, config, url) {
   if (writeDenied) return writeDenied;
 
   const user = normalizeUserId(url.searchParams.get('user'));
+  const reserved = guardReservedUser(user);
+  if (reserved) return reserved;
+
   const key = url.searchParams.get('key') || '';
   const data = key === '__all__' ? await clearPrefs(config, user) : await deletePref(config, user, key);
   return jsonResponse({ success: true, user, data });

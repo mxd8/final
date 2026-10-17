@@ -57,6 +57,10 @@ export function normalizeLogRow(row) {
     username: row.username == null ? '' : String(row.username),
     first_time: row.first_time == null ? '' : String(row.first_time),
     time: String(row.time ?? ''),
-    count: safeCount(row.count)
+    count: safeCount(row.count),
+    /** ✏️ 快速编辑过（手动调整）：展示徽标 + AI 调度优先但不改写其策略 */
+    manual_edited: Number(row.manual_edited) ? 1 : 0,
+    /** AI 已处理过：自动化调度跳过 */
+    ai_processed: Number(row.ai_processed) ? 1 : 0
   };
 }

@@ -14,7 +14,7 @@
 
 import { asDbError } from './contract.js';
 
-export const DB_SCHEMA_VERSION = 2;
+export const DB_SCHEMA_VERSION = 3;
 
 export const DB_META_TABLE = 'db_meta';
 export const HEALTH_PROBE_TABLE = 'health_probe';
@@ -82,7 +82,7 @@ export const DB_META_SCHEMA = `CREATE TABLE IF NOT EXISTS ${DB_META_TABLE} (
 /** 执行用语句数组（每条单语句） */
 export const NEW_TABLES_DDL = [DB_META_SCHEMA, HEALTH_PROBE_SCHEMA, HEARTBEATS_TABLE_DDL, HEARTBEATS_INDEX_DDL, DEVICES_TABLE_DDL, DEVICES_INDEX_DDL];
 
-/** 全新数据库的一次性建表语句（version 2 的完整形态，与 sql/schema.sql 逐条对应） */
+/** 全新数据库的一次性建表语句（version 3 的完整形态，与 sql/schema.sql 逐条对应） */
 export const BASE_DDL = [
   `CREATE TABLE IF NOT EXISTS surge_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,7 +97,9 @@ export const BASE_DDL = [
     username TEXT NOT NULL DEFAULT '',
     first_time TEXT NOT NULL DEFAULT '',
     time TEXT NOT NULL,
-    count INTEGER NOT NULL DEFAULT 1
+    count INTEGER NOT NULL DEFAULT 1,
+    manual_edited INTEGER NOT NULL DEFAULT 0,
+    ai_processed INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS uniq_surge_logs_hostname ON surge_logs(hostname)`,
   `CREATE INDEX IF NOT EXISTS idx_surge_logs_time ON surge_logs(time)`,
@@ -151,6 +153,12 @@ export const MIGRATION_STEPS = {
     `CREATE INDEX IF NOT EXISTS idx_surge_logs_username ON surge_logs(username)`,
     DEVICES_TABLE_DDL,
     DEVICES_INDEX_DDL
+  ],
+  3: [
+    // v3：AI 分流调度所需标记。manual_edited = ✏️ 快速编辑过（手动调整，AI 不改写其策略）；
+    // ai_processed = AI 已处理过（防止自动化每轮重复分析同一条规则）
+    `ALTER TABLE surge_logs ADD COLUMN manual_edited INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE surge_logs ADD COLUMN ai_processed INTEGER NOT NULL DEFAULT 0`
   ]
 };
 
