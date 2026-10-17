@@ -4,7 +4,7 @@
 
 import { RULE_TYPES, normalizePolicy as toSurgePolicy } from '../surge-rule/index.js';
 import { decodeParams } from './codec.js';
-import { MAX_SOURCE_LENGTH, safeCount } from './schema.js';
+import { MAX_SOURCE_LENGTH, MAX_IP_LENGTH, MAX_USERNAME_LENGTH, safeCount } from './schema.js';
 
 /** 库内策略名规范化，非法值回落 PROXY */
 export function normalizeRulePolicy(policy) {
@@ -20,6 +20,20 @@ export function normalizeRuleType(type) {
 /** 设备来源规范化：压平换行并截断 */
 export function normalizeSource(source) {
   return String(source ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_SOURCE_LENGTH);
+}
+
+/** 来源 IP 规范化：去端口与方括号字面量形态，只留地址本体 */
+export function normalizeIp(ip) {
+  let text = String(ip ?? '').trim();
+  if (!text) return '';
+  if (text.startsWith('[') && text.includes(']')) text = text.slice(1, text.indexOf(']'));
+  else if (/^(\d{1,3}\.){3}\d{1,3}:\d+$/.test(text)) text = text.split(':')[0];
+  return text.slice(0, MAX_IP_LENGTH);
+}
+
+/** 用户名 / 用户组规范化：压平换行并截断 */
+export function normalizeUsername(username) {
+  return String(username ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_USERNAME_LENGTH);
 }
 
 /**
@@ -39,6 +53,8 @@ export function normalizeLogRow(row) {
     params: decodeParams(row.params),
     comment: row.comment == null ? '' : String(row.comment),
     source: row.source == null ? '' : String(row.source),
+    ip: row.ip == null ? '' : String(row.ip),
+    username: row.username == null ? '' : String(row.username),
     first_time: row.first_time == null ? '' : String(row.first_time),
     time: String(row.time ?? ''),
     count: safeCount(row.count)

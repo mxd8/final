@@ -6,7 +6,7 @@
 
 import { inferHostType } from '../surge-rule/index.js';
 import { encodeParams, parseParamsText, normalizeParamsObject } from './codec.js';
-import { normalizeRulePolicy, normalizeRuleType, normalizeSource } from './normalize.js';
+import { normalizeRulePolicy, normalizeRuleType, normalizeSource, normalizeIp, normalizeUsername } from './normalize.js';
 import { LOGS_TABLE, WRITE_COLUMNS, nowIso } from './schema.js';
 
 /** 批量上报单次接受的命中条数上限：超出直接拒绝，防止请求体无限膨胀 */
@@ -18,15 +18,19 @@ const HIT_BATCH_MAX_COUNT = 1000;
 /**
  * 入参 type / value / params 可选：中转模式能拿到 $request.matched 的完整规则就一并落库，
  * 拿不到时按主机名形态推断类型、值回落为主机名。
+ * ip / username 为 v2 新增来源字段：ip 由中转后端从连接捕获，username 由脚本配置携带，
+ * 二者只为区分同型号多设备；单条 /hit 旧客户端不带这些字段，回落空串。
  */
 export async function recordHit(db, hostname, {
   source = '',
+  ip = '',
+  username = '',
   policy = 'PROXY',
   type = 'UNSET',
   value = 'UNSET',
   params = null
 } = {}) {
-  return recordHits(db, [{ hostname, source, policy, type, value, params }]);
+  return recordHits(db, [{ hostname, source, ip, username, policy, type, value, params }]);
 }
 
 /** 归一化一条命中的入库字段；hostname 为空返回 null（调用方跳过） */
@@ -46,6 +50,8 @@ function normalizeHitInput(item) {
       typeof item.params === 'string' ? parseParamsText(item.params) : normalizeParamsObject(item.params)
     ),
     source: normalizeSource(item.source),
+    ip: normalizeIp(item.ip),
+    username: normalizeUsername(item.username),
     count: Math.min(HIT_BATCH_MAX_COUNT, Math.max(1, Math.floor(Number(item.count) || 1)))
   };
 }
@@ -54,20 +60,24 @@ function normalizeHitInput(item) {
  * 组装单条 upsert：插入以 count 计数，冲突时按 excluded.count 累加。
  * policy 只在首次插入时写入：命中路径只知道「脚本配置的策略」而非真实命中策略，
  * 冲突覆盖会把用户手工调整过的策略冲掉，所以更新分支不动 policy。
+ * source / ip / username 同样保留首次上报值：规则行的来源语义是「谁最先捕获」，
+ * 设备的最新 IP 与在线状态由 devices 注册表单独维护。
  */
 function buildHitStatement(hit, now) {
   return {
     sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS})
-          VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
           ON CONFLICT(hostname) DO UPDATE SET
             type = CASE WHEN excluded.type = ? THEN ${LOGS_TABLE}.type ELSE excluded.type END,
             value = CASE WHEN ${LOGS_TABLE}.value = '' THEN excluded.value ELSE ${LOGS_TABLE}.value END,
             count = ${LOGS_TABLE}.count + excluded.count,
             time = excluded.time,
             first_time = COALESCE(NULLIF(${LOGS_TABLE}.first_time, ''), excluded.time),
-            source = CASE WHEN ${LOGS_TABLE}.source = '' THEN excluded.source ELSE ${LOGS_TABLE}.source END`,
+            source = CASE WHEN ${LOGS_TABLE}.source = '' THEN excluded.source ELSE ${LOGS_TABLE}.source END,
+            ip = CASE WHEN ${LOGS_TABLE}.ip = '' THEN excluded.ip ELSE ${LOGS_TABLE}.ip END,
+            username = CASE WHEN ${LOGS_TABLE}.username = '' THEN excluded.username ELSE ${LOGS_TABLE}.username END`,
     params: [
-      hit.hostname, hit.type, hit.value, hit.policy, hit.params, hit.source, now, now, hit.count,
+      hit.hostname, hit.type, hit.value, hit.policy, hit.params, hit.source, hit.ip, hit.username, now, now, hit.count,
       hit.type
     ]
   };

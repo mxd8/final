@@ -164,9 +164,9 @@ export async function copyHealthReport() {
     await cpCopy(lines.join('\n'), '诊断报告已复制');
 }
 
-/** 初始化：进入配置检测页自动执行基础检测（视图打开即自证） */
+/** 初始化：进入设备检测综合视图自动执行基础检测（原「配置检测」页已并入该视图） */
 export function initHealthView() {
     document.addEventListener('cp:page', (event) => {
-        if (event.detail === 'health' && !lastReport && !running) runChecks('basic');
+        if (event.detail === 'devices' && !lastReport && !running) runChecks('basic');
     });
 }

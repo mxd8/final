@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS surge_logs (
     comment TEXT NOT NULL DEFAULT '',
     -- 规则来源：上报设备名（Surge 的 $status.name）或手工填写
     source TEXT NOT NULL DEFAULT '',
+    -- 来源 IP：上报设备的公网出口 IP（中转后端从请求连接捕获），区分同型号多设备
+    ip TEXT NOT NULL DEFAULT '',
+    -- 用户名 / 用户组：Surge 模块参数 FINAL_USER，随上报自动携带
+    username TEXT NOT NULL DEFAULT '',
     -- 首次命中时间，UTC ISO 字符串；upsert 冲突后保持不变，只在首次插入时写入
     first_time TEXT NOT NULL DEFAULT '',
     -- 最近一次命中时间，UTC ISO 字符串；面板按设备本地日统计「今日新增」
@@ -49,9 +53,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_surge_logs_hostname ON surge_logs(hostnam
 CREATE INDEX IF NOT EXISTS idx_surge_logs_time ON surge_logs(time);
 CREATE INDEX IF NOT EXISTS idx_surge_logs_type ON surge_logs(type);
 CREATE INDEX IF NOT EXISTS idx_surge_logs_source ON surge_logs(source);
+CREATE INDEX IF NOT EXISTS idx_surge_logs_username ON surge_logs(username);
 
 -- ---------------------------------------------------------------------------
--- 2. 用户偏好（前端个性化设置，跨设备同步）
+-- 2. 来源设备注册表（v2 新增）
+--    每个上报来源（面板心跳 / 捕获脚本批量上报）登记一行：
+--    在线状态（最后上线时间 + 刷新间隔推算）、配置状态（组件版本比对）、
+--    用户组与来源 IP，支撑实时统计面板的 n/m 在线统计与分级告警。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS devices (
+    -- 设备标识：面板 clientId（client: 前缀）或 用户名|设备名|IP 三元组（dev: 前缀）
+    device_id TEXT PRIMARY KEY,
+    -- 设备型号（$environment device-model）
+    name TEXT NOT NULL DEFAULT '',
+    -- 用户组 / 用户名（模块参数 FINAL_USER）
+    username TEXT NOT NULL DEFAULT '',
+    -- 最近一次上报的来源 IP
+    ip TEXT NOT NULL DEFAULT '',
+    -- 面板脚本自报版本
+    panel_version TEXT NOT NULL DEFAULT '',
+    -- 捕获脚本自报版本
+    logger_version TEXT NOT NULL DEFAULT '',
+    -- 配置状态：latest（最新）/ outdated（过期）/ failed（无法校验）
+    config_status TEXT NOT NULL DEFAULT 'failed',
+    -- 设备上报的面板刷新间隔秒数（参与离线窗口计算，0 = 未上报）
+    refresh_seconds INTEGER NOT NULL DEFAULT 0,
+    -- 最后上线时间（UTC ISO）：超过离线窗口无请求即判定离线
+    last_online_time TEXT NOT NULL DEFAULT '',
+    first_seen TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_online ON devices(last_online_time);
+
+-- ---------------------------------------------------------------------------
+-- 3. 用户偏好（前端个性化设置，跨设备同步）
 --    user_id 是前端生成的随机设备标识，不是账号体系；
 --    setting_value 为 TEXT，布尔与数字都序列化存储，由前端按键解析。
 -- ---------------------------------------------------------------------------
@@ -67,7 +103,7 @@ CREATE TABLE IF NOT EXISTS app_prefs (
 CREATE INDEX IF NOT EXISTS idx_app_prefs_user ON app_prefs(user_id);
 
 -- ---------------------------------------------------------------------------
--- 3. 订阅规则（已并入 surge_logs，保留表结构仅为兼容旧部署）
+-- 4. 订阅规则（已并入 surge_logs，保留表结构仅为兼容旧部署）
 --    新版本不再读写这张表：规则统一存 surge_logs，来源与规则类型一并记录。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rules (
@@ -80,7 +116,7 @@ CREATE TABLE IF NOT EXISTS rules (
 CREATE INDEX IF NOT EXISTS idx_rules_domain ON rules(domain);
 
 -- ---------------------------------------------------------------------------
--- 4. 订阅源清单（URL 规则订阅解析功能）
+-- 5. 订阅源清单（URL 规则订阅解析功能）
 --    只存「地址 + 名称 + 最近抓取状态」，不存规则内容：内容是拉下来时才有的东西，
 --    存副本会立刻过期，也会让「重新解析」失去意义。
 --
@@ -124,6 +160,10 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_time ON subscriptions(updated_at);
 --   ALTER TABLE surge_logs ADD COLUMN params TEXT NOT NULL DEFAULT '';
 --   ALTER TABLE surge_logs ADD COLUMN source TEXT NOT NULL DEFAULT '';
 --   ALTER TABLE surge_logs ADD COLUMN first_time TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE surge_logs ADD COLUMN ip TEXT NOT NULL DEFAULT '';        -- v2：来源 IP
+--   ALTER TABLE surge_logs ADD COLUMN username TEXT NOT NULL DEFAULT ''; -- v2：用户名/用户组
+--
+-- v2 新增设备注册表（在线状态 / 配置告警），直接执行上文 devices 的 CREATE 语句即可
 --
 --   （部署后 /api/logger 首次被访问也会自动补列，见 functions/_utils/logs.js 的 MIGRATIONS）
 --

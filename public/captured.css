@@ -84,10 +84,11 @@
     color: var(--ios-blue-text);
 }
 
-/* 移动端隐藏次要列：提升单手操作时的信息密度 */
+/* 移动端隐藏次要列：提升单手操作时的信息密度（用户可在「列显示」里自行打开） */
 @media (max-width: 767px) {
     .cp-col-params,
     .cp-col-source,
+    .cp-col-ip,
     .cp-col-time {
         display: none !important;
     }
@@ -265,6 +266,40 @@ body.cp-nav-bottom main.cp-pages {
     font-weight: 700;
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
+}
+/* 来源设备统计卡：可点击进入设备检测综合视图 */
+.cp-stat-clickable {
+    cursor: pointer;
+    transition: transform 0.15s var(--ios-ease), box-shadow 0.15s var(--ios-ease);
+}
+.cp-stat-clickable:hover,
+.cp-stat-clickable:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ios-blue) 45%, transparent);
+    transform: translateY(-1px);
+    outline: none;
+}
+.cp-stat-hint {
+    font-size: 0.68rem;
+    line-height: 1.3;
+}
+
+/* 表头显隐：被隐藏的列（th 与 td 均带 data-col） */
+.cp-rule-table .cp-col-hidden {
+    display: none !important;
+}
+/* 列显示配置菜单：多选框列表，宽度略收 */
+.cp-column-menu {
+    max-width: 240px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.cp-column-menu .form-check-input {
+    margin-top: 0.2em;
+}
+
+/* 设备检测视图：设备行与告警 */
+.cp-device-list .cp-device-row:last-child {
+    border-bottom: 0 !important;
 }
 
 .cp-page-info {

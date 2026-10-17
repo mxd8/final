@@ -8,7 +8,7 @@ import { startOfClientDay } from '../timezone.js';
 import { LOGS_TABLE, LOG_COLUMNS } from './schema.js';
 import { normalizeLogRow, normalizeRulePolicy, normalizeSource } from './normalize.js';
 
-/** search 命中匹配值 / 策略 / 来源 / 注释，LIKE 通配符必须转义 */
+/** search 命中匹配值 / 策略 / 来源 / 来源 IP / 用户名 / 注释，LIKE 通配符必须转义 */
 function pushSearch(conditions, params, search) {
   const like = `%${likeEscape(search)}%`;
   conditions.push(
@@ -16,9 +16,11 @@ function pushSearch(conditions, params, search) {
        OR COALESCE(value, '') LIKE ? ESCAPE '\\'
        OR policy LIKE ? ESCAPE '\\'
        OR COALESCE(source, '') LIKE ? ESCAPE '\\'
+       OR COALESCE(ip, '') LIKE ? ESCAPE '\\'
+       OR COALESCE(username, '') LIKE ? ESCAPE '\\'
        OR COALESCE(comment, '') LIKE ? ESCAPE '\\')`
   );
-  params.push(like, like, like, like, like);
+  params.push(like, like, like, like, like, like, like);
 }
 
 /** minCount <= 1 不加条件：语义上等于全表，且避免查询计划变差 */

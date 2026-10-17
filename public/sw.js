@@ -12,8 +12,8 @@
  * 旧缓存在 activate 阶段整体清除；ENTRY_VERSION 与 index.html 的入口脚本
  * ?v= 参数同源，保证 SW 预缓存与页面实际引用的是同一份模块图。
  */
-const VERSION = 'v1.1.1-bd72f11';
-const ENTRY_VERSION = '1.1.1';
+const VERSION = 'v1.2.0-c2f65ac';
+const ENTRY_VERSION = '1.2.0';
 const PRECACHE = `final-precache-${VERSION}`;
 const RUNTIME = `final-runtime-${VERSION}`;
 
@@ -34,6 +34,7 @@ const PRECACHE_URLS = [
     'js/api.js',
     'js/clipboard.js',
     'js/config.js',
+    'js/devices.js',
     'js/dom.js',
     'js/edit.js',
     'js/export.js',

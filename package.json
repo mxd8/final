@@ -1,6 +1,6 @@
 {
   "name": "my-surge-manager",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "A simple surge manager with Cloudflare Pages and Functions",
   "private": true,
   "engines": {

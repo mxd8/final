@@ -1324,6 +1324,83 @@ console.log('\n[heartbeat] stats 心跳与客户端注册表');
   check('30 分钟前的心跳判定离线', !isHeartbeatOnline(new Date(Date.now() - 30 * 60000).toISOString()));
 }
 
+/* ---------------- 设备注册表：多设备在线状态与配置告警 ---------------- */
+console.log('\n[devices] 多设备检测、来源 IP / 用户名捕获与分级告警');
+{
+  const { COMPONENT_VERSIONS } = await import('../functions/_utils/build-meta.js');
+
+  // 捕获脚本批量上报：设备上下文走请求头，来源 IP 由服务端从连接头捕获
+  const hitRes = await call(loggerHandler, '/api/logger/hits', {
+    method: 'POST',
+    body: { hits: [{ hostname: 'device-a.com', count: 2 }, { hostname: 'device-b.com' }], username: '' },
+    headers: {
+      'x-final-client': 'panel-dev-a',
+      'x-final-device': 'iPhone15,3',
+      'x-final-user': 'boss',
+      'x-final-logger': COMPONENT_VERSIONS.logger,
+      'cf-connecting-ip': '203.0.113.7'
+    }
+  });
+  check('批量上报携带设备上下文仍正常落库', hitRes.status === 200 && (await hitRes.json()).data.accepted === 2);
+
+  const rows = await list('?search=device-a.com');
+  check('命中行记录来源 IP 与用户名', rows[0]?.ip === '203.0.113.7' && rows[0]?.username === 'boss', JSON.stringify(rows[0]));
+
+  // 面板心跳：另一台设备（同型号不同 IP → 不同设备行），版本一致 → 配置最新
+  const beatRes = await call(loggerHandler, '/api/logger/stats', {
+    headers: {
+      'x-final-client': 'panel-dev-b',
+      'x-final-device': 'iPhone15,3',
+      'x-final-user': 'family',
+      'x-final-version': COMPONENT_VERSIONS.panel,
+      'x-final-refresh': '600',
+      'cf-connecting-ip': '203.0.113.8'
+    }
+  });
+  const beatData = (await beatRes.json()).data;
+  check('stats 响应捎带设备清单与汇总', Array.isArray(beatData.devices) && beatData.deviceSummary && typeof beatData.deviceSummary.total === 'number');
+
+  const summary = beatData.deviceSummary;
+  const byUser = Object.fromEntries(beatData.devices.map((d) => [d.username || d.deviceId, d]));
+  check('同型号多设备按 clientId / IP 区分', beatData.devices.length >= 2 && byUser['boss'] && byUser['family'], JSON.stringify(beatData.devices.map((d) => d.username)));
+  check('设备行记录型号 / IP / 版本', byUser['boss'].name === 'iPhone15,3' && byUser['boss'].ip === '203.0.113.7');
+  check('版本一致的设备配置状态为 latest', byUser['family'].configStatus === 'latest' && byUser['family'].online);
+  check('仅上报捕获脚本且版本一致同样算配置最新', byUser['boss'].configStatus === 'latest', byUser['boss'].configStatus);
+  check('在线统计 n/m 正确', summary.online >= 2 && summary.total >= 2, JSON.stringify(summary));
+
+  // 从不上报版本的设备 → 校验失败（danger，级别最高）；落后版本 → 配置过期（warning）
+  const silentRes = await call(loggerHandler, '/api/logger/stats', {
+    headers: { 'x-final-client': 'panel-dev-silent', 'x-final-device': 'MacBook Pro', 'x-final-user': 'boss', 'cf-connecting-ip': '203.0.113.10' }
+  });
+  const staleRes = await call(loggerHandler, '/api/logger/stats', {
+    headers: {
+      'x-final-client': 'panel-dev-c',
+      'x-final-device': 'iPad Pro',
+      'x-final-user': 'family',
+      'x-final-version': '1.0.0',
+      'cf-connecting-ip': '203.0.113.9'
+    }
+  });
+  const staleData = (await staleRes.json()).data;
+  const staleDevice = staleData.devices.find((d) => d.deviceId === 'client:panel-dev-c');
+  check('落后版本的设备配置状态为 outdated', staleDevice?.configStatus === 'outdated', JSON.stringify(staleDevice));
+  const silentDevice = staleData.devices.find((d) => d.deviceId === 'client:panel-dev-silent');
+  check('未上报版本的设备配置状态为 failed', silentDevice?.configStatus === 'failed', JSON.stringify(silentDevice));
+  check('校验失败告警排序在配置过期之前（danger 最高）', staleData.deviceSummary.alerts[0]?.type === 'failed' && staleData.deviceSummary.alerts[0]?.level === 'danger', JSON.stringify(staleData.deviceSummary.alerts));
+  check('配置过期进入告警清单（warning）', staleData.deviceSummary.alerts.some((a) => a.type === 'outdated' && a.level === 'warning'), JSON.stringify(staleData.deviceSummary.alerts));
+
+  // 匿名 stats 也能拿到设备报表（网页面板零新增请求取数）
+  const anonymousDevices = await stats();
+  check('匿名 stats 同样捎带设备报表', anonymousDevices.devices?.length >= 3 && anonymousDevices.deviceSummary.total >= 3);
+
+  // 离线窗口：5 分钟下限 + 按上报刷新间隔放宽
+  const devicesModule = await import('../functions/_utils/devices.js');
+  check('离线窗口下限 5 分钟', devicesModule.offlineWindowMs(0) === 20 * 60 * 1000 || devicesModule.offlineWindowMs(0) >= 5 * 60 * 1000);
+  check('离线窗口 = max(5分钟, 2×刷新间隔)', devicesModule.offlineWindowMs(60) === 5 * 60 * 1000 && devicesModule.offlineWindowMs(600) === 20 * 60 * 1000);
+  check('最近上线判定在线', devicesModule.isDeviceOnline(new Date().toISOString(), 600));
+  check('超过窗口判定离线', !devicesModule.isDeviceOnline(new Date(Date.now() - 21 * 60000).toISOString(), 600));
+}
+
 /* ---------------- 健康检测：/api/health ---------------- */
 console.log('\n[health] 基础与深度检测');
 {
@@ -1389,17 +1466,20 @@ console.log('\n[health] 基础与深度检测');
   check('health 不支持 POST', (await call(healthHandler, '/api/health', { method: 'POST', body: {} })).status === 405);
 }
 
-/* ---------------- schema：新增三张表 ---------------- */
-console.log('\n[schema] 健康探针 / 心跳 / 版本表');
+/* ---------------- schema：新增四张表 ---------------- */
+console.log('\n[schema] 健康探针 / 心跳 / 设备 / 版本表');
 {
   const all = await (await call(schemaHandler, '/api/schema')).text();
   check('汇总包含健康探针表', all.includes('health_probe'));
   check('汇总包含心跳注册表', all.includes('client_heartbeats'));
+  check('汇总包含设备注册表', all.includes('devices'));
   check('汇总包含版本表', all.includes('db_meta'));
   const probe = await (await call(schemaHandler, '/api/schema/table/health')).text();
   check('健康探针表可单独获取', probe.includes('marker') && probe.includes('UNIQUE'));
   const beats = await (await call(schemaHandler, '/api/schema/table/heartbeats')).text();
   check('心跳表可单独获取', beats.includes('panel_version') && beats.includes('client_id'));
+  const devices = await (await call(schemaHandler, '/api/schema/table/devices')).text();
+  check('设备表可单独获取', devices.includes('last_online_time') && devices.includes('config_status') && devices.includes('username'));
   check('未知表返回 404', (await call(schemaHandler, '/api/schema/table/nope')).status === 404);
 }
 
@@ -1446,6 +1526,7 @@ console.log('\n[routes] _routes.json 覆盖所有接口');
       '/api/rules', '/api/rules/1',
       '/api/schema', '/api/schema/table/logger', '/api/schema/table/prefs',
       '/api/schema/table/subscriptions', '/api/schema/table/health', '/api/schema/table/heartbeats',
+      '/api/schema/table/devices',
       '/api/subscribe', '/api/subscribe/parse', '/api/subscribe/save', '/api/subscribe/delete',
       '/api/subscribe/schema'
     ];

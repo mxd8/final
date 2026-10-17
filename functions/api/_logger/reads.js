@@ -12,6 +12,7 @@ import { CACHE_OK, readMinCount, readLastDays } from './constants.js';
 import { BUILD_LABEL, COMPONENT_VERSIONS } from '../../_utils/build-meta.js';
 import { DB_SCHEMA_VERSION } from '../../_utils/db/ddl.js';
 import { parseHeartbeatHeaders, recordHeartbeat, listHeartbeats } from '../../_utils/heartbeat.js';
+import { parseDeviceHeaders, touchDevice, getDevicesReport, clientIp } from '../../_utils/devices.js';
 
 export async function handleList(context, config, url) {
   const logs = await listLogs(config, {
@@ -26,13 +27,16 @@ export async function handleList(context, config, url) {
 /**
  * 面板与前端顶栏共用的统计信息，同时是 Surge 面板脚本的心跳入口：
  *   - 面板脚本在既有 /stats 请求上捎带心跳头（零新增请求），服务端 upsert 进
- *     client_heartbeats 注册表——健康检测的「客户端连通状态」与版本看板共用这份数据；
- *   - 响应捎带 latest（各组件最新版本）与最近心跳清单，网页版本看板零新增请求取数。
- * 心跳失败绝不影响统计返回；带心跳头的请求是个性化响应，禁用共享缓存。
+ *     client_heartbeats 注册表（版本握手）与 devices 注册表（在线状态 / 配置告警）——
+ *     健康检测、版本看板与首页来源设备视图共用这份数据；
+ *   - 响应捎带 latest（各组件最新版本）、最近心跳清单与设备报表（含 n/m 在线
+ *     统计与分级告警），网页与 Surge 面板零新增请求取数。
+ * 心跳与设备登记失败绝不影响统计返回；带心跳头的请求是个性化响应，禁用共享缓存。
  */
 export async function handleStats(context, db, url) {
   let heartbeatNote = '';
   const heartbeat = parseHeartbeatHeaders(context.request);
+  const device = parseDeviceHeaders(context.request);
   if (heartbeat) {
     const hitDenied = requireHitToken(context.env, extractToken(context.request));
     if (hitDenied) {
@@ -42,6 +46,14 @@ export async function handleStats(context, db, url) {
         await recordHeartbeat(db, heartbeat);
       } catch (error) {
         console.warn('[heartbeat] 心跳记录失败（不影响统计）:', error?.message ?? error);
+      }
+      try {
+        await touchDevice(db, {
+          ...device,
+          ip: clientIp(context.request)
+        });
+      } catch (error) {
+        console.warn('[devices] 设备登记失败（不影响统计）:', error?.message ?? error);
       }
     }
   }
@@ -55,6 +67,14 @@ export async function handleStats(context, db, url) {
       clients = [];
     }
   }
+  // 设备报表：清单 + 在线统计（n/m）+ 分级告警；失败回落空报表，统计数字照常返回
+  let devices = [];
+  let deviceSummary = { total: 0, online: 0, alertCount: 0, alerts: [] };
+  try {
+    ({ devices, deviceSummary } = await getDevicesReport(db, { limit: 100 }));
+  } catch (error) {
+    console.warn('[devices] 设备报表读取失败（不影响统计）:', error?.message ?? error);
+  }
   const headers = { ...(heartbeat ? { 'Cache-Control': 'no-store' } : CACHE_OK), ...warningHeadersIfOpen(context.env) };
   return jsonResponse(
     {
@@ -64,6 +84,8 @@ export async function handleStats(context, db, url) {
         serverVersion: BUILD_LABEL,
         latest: COMPONENT_VERSIONS,
         clients,
+        devices,
+        deviceSummary,
         ...(heartbeatNote ? { heartbeat: heartbeatNote } : {})
       }
     },

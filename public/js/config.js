@@ -133,5 +133,10 @@ export const state = {
     /** 表格排序：默认按最近命中倒序 */
     tableSort: { key: 'time', dir: 'desc' },
     /** 填充订阅时选定的补全策略，空串表示保持订阅原策略 */
-    fillPolicy: ''
+    fillPolicy: '',
+    /**
+     * 规则表隐藏列集合（列 key 见 render.js 的 TABLE_COLUMNS）。
+     * 状态持久化到数据库（prefs-store 防抖合并写入），空集合 = 全部显示。
+     */
+    hiddenColumns: new Set()
 };

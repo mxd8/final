@@ -116,9 +116,10 @@ function buildStatements(items, override, now) {
     });
     statements.push({
       sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(hostname) DO NOTHING`,
-      params: [item.hostname, item.type, item.value, item.policy, encodedParams, item.comment, item.source, now, now]
+      // 批量粘贴 / Gist 还原没有设备上下文：ip / username 留空，命中上报路径才会携带
+      params: [item.hostname, item.type, item.value, item.policy, encodedParams, item.comment, item.source, '', '', now, now]
     });
   }
   return statements;

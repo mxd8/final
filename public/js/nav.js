@@ -1,6 +1,9 @@
 /**
  * 页面导航：首页 / 数据 / 设置 三个视图的路由切换、
  * 导航位置（顶栏内嵌 / 底部 TabBar）与主题色应用。
+ *
+ * devices（设备检测）是隐藏页：不渲染导航按钮，由首页「来源设备」统计卡点击进入——
+ * 综合详情视图聚合了设备在线状态、配置告警、配置检测与版本与更新。
  */
 
 import { state, CP_ACCENTS, CP_ACCENT_DEFAULT } from './config.js';
@@ -12,12 +15,12 @@ export const PAGES = [
     { id: 'data', icon: '🗂️', label: '数据' },
     { id: 'ai', icon: '🤖', label: 'AI配置' },
     { id: 'settings', icon: '⚙️', label: '设置' },
-    { id: 'health', icon: '🩺', label: '配置检测' }
+    { id: 'devices', icon: '📱', label: '设备检测', hidden: true }
 ];
 
 const getPageId = (page) => `cpPage-${page.id}`;
 
-/** 顶部与底部导航共用一套按钮生成，保证两处永远一致 */
+/** 顶部与底部导航共用一套按钮生成，保证两处永远一致（hidden 页不出现在导航里） */
 function navItemHtml(page) {
     return `
         <button type="button" class="cp-nav-item" data-page="${page.id}" aria-controls="${getPageId(page)}">
@@ -31,7 +34,7 @@ function renderNav() {
         console.error('PAGES array is empty or undefined');
         return;
     }
-    const html = PAGES.map(navItemHtml).join('');
+    const html = PAGES.filter((page) => !page.hidden).map(navItemHtml).join('');
     for (const nav of [$('cpNavTop'), $('cpNavBottom')]) {
         if (nav) nav.innerHTML = html;
     }

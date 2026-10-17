@@ -124,8 +124,12 @@ function fillQuickEditForm(item) {
         .map(([name, raw]) => (raw == null || raw === '' ? name : `${name}=${raw}`))
         .join(',');
     $('cpQuickComment').value = String(item.comment || '');
-    $('cpQuickMeta').textContent =
-        `📱 来源：${item.source || '—'} · 🔥 命中 ${Number(item.count) || 1} 次 · 最近命中 ${formatTime(item.time)}`;
+    // 来源 IP / 用户名为 v2 新增字段：区分同型号多设备；旧数据没有时显示占位
+    const sourceParts = [`📱 来源：${item.source || '—'}`];
+    if (item.ip) sourceParts.push(`🌐 来源 IP：${item.ip}`);
+    if (item.username) sourceParts.push(`👤 用户：${item.username}`);
+    sourceParts.push(`🔥 命中 ${Number(item.count) || 1} 次`, `最近命中 ${formatTime(item.time)}`);
+    $('cpQuickMeta').textContent = sourceParts.join(' · ');
 }
 
 /** 类型与策略候选：类型用后端 meta 的真实分布，策略 = 内置 + 现有规则里的自定义组。

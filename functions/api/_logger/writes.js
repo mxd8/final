@@ -20,6 +20,36 @@ import {
 } from '../../_utils/logs/index.js';
 import { NO_CACHE } from './constants.js';
 import { COMPONENT_VERSIONS } from '../../_utils/build-meta.js';
+import { clientIp, parseDeviceHeaders, touchDevice, buildDeviceId } from '../../_utils/devices.js';
+import { normalizeUsername, normalizeIp } from '../../_utils/logs/normalize.js';
+
+/**
+ * 从批量上报请求解析设备上下文：来源 IP 由服务端从连接捕获（Surge 端拿不到
+ * 自己的公网出口 IP），用户名 / 设备标识 / 版本自报走请求头，username 字段兜底。
+ */
+function deviceContextFromRequest(request, body) {
+  const device = parseDeviceHeaders(request);
+  const fallbackUsername = normalizeUsername(body?.username);
+  return {
+    clientId: device.clientId,
+    name: device.name,
+    username: device.username || fallbackUsername,
+    ip: clientIp(request),
+    loggerVersion: device.loggerVersion
+  };
+}
+
+/**
+ * 设备登记：命中上报本身也是一次「在线信号」，同一次触达刷新设备注册表的
+ * last_online_time。失败只打日志——设备表缺席绝不能拖垮命中写库主链路。
+ */
+async function touchDeviceSafely(db, context) {
+  try {
+    await touchDevice(db, context);
+  } catch (error) {
+    console.warn('[devices] 设备登记失败（不影响上报）:', error?.message ?? error);
+  }
+}
 
 /** 上报接口：任一已配置令牌（PANEL_WRITE_TOKEN / PANEL_HIT_TOKEN）匹配即放行 */
 export async function handleHit(context, config) {
@@ -33,22 +63,27 @@ export async function handleHit(context, config) {
   if (!hostname) return badRequest('hostname 不能为空');
 
   // 请求体是扁平结构 {hostname, type, value, source, policy, params}，
-  // 与 surge/final-logger.js 中转模式实际发出的字段一一对应
+  // 与 surge/final-logger.js 中转模式实际发出的字段一一对应；ip / username 为 v2 扩展
+  const device = deviceContextFromRequest(context.request, body.value);
   const result = await recordHit(config, hostname, {
     source: normalizeSource(body.value.source),
+    ip: normalizeIp(body.value.ip) || device.ip,
+    username: normalizeUsername(body.value.username) || device.username,
     policy: body.value.policy,
     type: body.value.type,
     value: body.value.value,
     params: body.value.params
   });
+  await touchDeviceSafely(config, { ...device, deviceId: buildDeviceId(device) });
   // 捕获脚本版本握手：响应捎带最新版本，本地副本据此写入 final_logger_meta 供面板提示
   return jsonResponse({ success: true, data: { ...result, latestLoggerVersion: COMPONENT_VERSIONS.logger } }, { headers: NO_CACHE });
 }
 
 /**
- * 批量上报入口：{hits: [{hostname, count?, type?, value?, source?, policy?, params?}]}。
+ * 批量上报入口：{hits: [{hostname, count?, type?, value?, source?, policy?, params?, ip?, username?}]}。
  * 捕获脚本的本地去重窗口攒满一批后一次提交，服务端一个批量事务落库；
- * 令牌校验与单条 /hit 完全一致。
+ * 令牌校验与单条 /hit 完全一致。设备上下文（IP / 用户名 / 标识）对整批生效，
+ * 单条命中里的同名字段优先。
  */
 export async function handleHitBatch(context, config) {
   const hitDenied = requireHitToken(context.env, extractUrlOrHeaderToken(context));
@@ -61,7 +96,15 @@ export async function handleHitBatch(context, config) {
   if (!Array.isArray(hits) || !hits.length) return badRequest('hits 必须是非空数组');
   if (hits.length > HIT_BATCH_MAX_ITEMS) return badRequest(`单次上报最多 ${HIT_BATCH_MAX_ITEMS} 条命中`);
 
-  const result = await recordHits(config, hits);
+  const device = deviceContextFromRequest(context.request, body.value);
+  const enriched = hits.map((hit) => ({
+    ...hit,
+    ip: normalizeIp(hit.ip) || device.ip,
+    username: normalizeUsername(hit.username) || device.username
+  }));
+
+  const result = await recordHits(config, enriched);
+  await touchDeviceSafely(config, { ...device, deviceId: buildDeviceId(device) });
   // 捕获脚本版本握手：本地副本无法自更新，闭环止于「发现并提示」（面板读 final_logger_meta）
   return jsonResponse({ success: true, data: { ...result, latestLoggerVersion: COMPONENT_VERSIONS.logger } }, { headers: NO_CACHE });
 }

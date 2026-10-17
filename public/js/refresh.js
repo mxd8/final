@@ -9,6 +9,7 @@
 
 import { cpLoadLogs, cpLoadStats, cpLoadMeta, ensureAllLogs } from './api.js';
 import { populateSourceFilters, populateTypeFilterSelect, renderLogList } from './render.js';
+import { renderDevicePanel } from './devices.js';
 import { refreshExportSummary } from './export.js';
 import { cpSetBusy, cpToast } from './notify.js';
 import { loadSubscriptions } from './subscribe.js';
@@ -23,8 +24,9 @@ async function doRefreshAll() {
     populateTypeFilterSelect();
     renderLogList();
     refreshExportSummary();
-    // stats 捎带的客户端心跳（版本看板的 Surge 侧数据）到达后刷新看板
+    // stats 捎带的客户端心跳（版本看板的 Surge 侧数据）与设备报表到达后刷新对应视图
     renderVersionBoard();
+    renderDevicePanel();
 }
 
 let refreshChain = Promise.resolve();

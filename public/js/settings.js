@@ -72,6 +72,19 @@ function applyListPreferences() {
     state.exportType = CP_EXPORT_TYPES.includes(getPref(keys.captureExportType))
         ? getPref(keys.captureExportType)
         : CP_DEFAULTS.exportType;
+    // 规则表表头显隐（JSON 数组，存隐藏列 key）；脏值丢弃回落全部显示
+    state.hiddenColumns = parseHiddenColumns(getPref(keys.tableColumns, ''));
+}
+
+/** 表头显隐偏好解析：只接受字符串数组，其余回落空集合（全部显示） */
+function parseHiddenColumns(raw) {
+    try {
+        const parsed = JSON.parse(String(raw || '[]'));
+        if (!Array.isArray(parsed)) return new Set();
+        return new Set(parsed.filter((key) => typeof key === 'string' && key.length > 0));
+    } catch {
+        return new Set();
+    }
 }
 
 /** 把偏好写回控件 */

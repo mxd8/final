@@ -8,7 +8,8 @@ import { $ } from './dom.js';
 import { wireNav, switchPage } from './nav.js';
 import { cpSetBusy } from './notify.js';
 import { loadPrefs, savePref, keys } from './prefs-store.js';
-import { populateTypeFilterSelect, renderLogList } from './render.js';
+import { populateTypeFilterSelect, renderLogList, setColumnVisible, renderColumnMenu } from './render.js';
+import { renderDevicePanel } from './devices.js';
 import { cpLoadLogs } from './api.js';
 import { cpRefreshAll, reload } from './refresh.js';
 import { cancelEdit, openQuickEdit, saveQuickEdit, quickEditTarget, closeQuickEdit, fillTextareaFromTable, clearBatchText, batchOverride, fillFromSubscription, updateBatchParseInfo } from './edit.js';
@@ -83,6 +84,7 @@ function onTableBodyClick(event) {
 /** 绑定列表与批量编辑区控件事件 */
 function wireListControls() {
     populateTypeFilterSelect();
+    renderColumnMenu();
 
     $('cpSearch').addEventListener('input', () => {
         clearTimeout(searchTimer);
@@ -96,6 +98,24 @@ function wireListControls() {
     $('cpBatchTextarea').addEventListener('input', updateBatchParseInfo);
     $('cpTableBody').addEventListener('click', onTableBodyClick);
     $('themeToggleBtn').addEventListener('click', toggleTheme);
+
+    // 表头显隐：多选框事件委托（菜单内容随状态重渲染，父节点监听不变）
+    $('cpColumnMenu')?.addEventListener('change', (event) => {
+        const toggle = event.target.closest('[data-col-toggle]');
+        if (toggle) setColumnVisible(toggle.dataset.colToggle, toggle.checked);
+    });
+
+    // 来源设备统计卡点击 → 设备检测综合视图（卡片由 renderStats 重渲染，父节点委托）
+    const stats = $('cpStats');
+    stats?.addEventListener('click', (event) => {
+        if (event.target.closest('#cpStatDevices')) switchPage('devices');
+    });
+    stats?.addEventListener('keydown', (event) => {
+        if ((event.key === 'Enter' || event.key === ' ') && event.target.closest('#cpStatDevices')) {
+            event.preventDefault();
+            switchPage('devices');
+        }
+    });
 }
 
 /** 绑定导出筛选弹窗与全局快捷键 */
@@ -145,6 +165,10 @@ function initCapturedPanel() {
     wireExportControls();
     initVersionCheck();
     initHealthView();
+    // 进入设备检测综合视图时用已加载的 stats 数据即时渲染设备面板（刷新后由 doRefreshAll 再刷新）
+    document.addEventListener('cp:page', (event) => {
+        if (event.detail === 'devices') renderDevicePanel();
+    });
     bootData();
 }
 

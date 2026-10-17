@@ -50,19 +50,21 @@ export function validateLogPatch(entry = {}) {
   };
 }
 
-/** 修改匹配值 = 换主键（hostname 唯一）：删旧行插新行，保留计数、备注、来源与时间 */
+/** 修改匹配值 = 换主键（hostname 唯一）：删旧行插新行，保留计数、备注、来源、来源 IP 与时间 */
 export async function renameLog(db, oldHostname, { newValue, type = 'UNSET', policy = 'UNSET', params = null, comment = null, source = null } = {}) {
   const newHostname = String(newValue || '').trim();
   if (!newHostname || newHostname === oldHostname) return { found: false, created: false, renamed: false };
 
-  const [oldRow] = await db.execute(`SELECT count, time, first_time, policy, comment, source, type FROM ${LOGS_TABLE} WHERE hostname = ?`, [oldHostname]);
+  const [oldRow] = await db.execute(`SELECT count, time, first_time, policy, comment, source, ip, username, type FROM ${LOGS_TABLE} WHERE hostname = ?`, [oldHostname]);
   const baseCount = oldRow ? safeCount(oldRow.count) : 1;
   const baseTime = oldRow ? String(oldRow.time ?? '') : nowIso();
   const baseFirst = oldRow && String(oldRow.first_time ?? '').trim() !== '' ? String(oldRow.first_time) : baseTime;
+  const baseIp = oldRow ? String(oldRow.ip ?? '') : '';
+  const baseUsername = oldRow ? String(oldRow.username ?? '') : '';
 
   const typeText = String(type ?? 'UNSET').trim().toUpperCase();
   const validType = typeText === 'UNSET' ? (oldRow ? normalizeRuleType(oldRow.type) : 'DOMAIN-SUFFIX') : normalizeRuleType(typeText);
-  const policyText = String(policy ?? 'UNSET').trim();
+  const policyText = String(policy ?? '').trim();
   const validPolicy = policyText === 'UNSET' ? (oldRow ? normalizeRulePolicy(oldRow.policy) : 'PROXY') : normalizeRulePolicy(policyText);
   const validParams = params === null ? '' : encodeParams(normalizeParamsObject(params));
   const validComment = comment === null ? (oldRow ? String(oldRow.comment ?? '') : '') : String(comment).trim();
@@ -72,8 +74,8 @@ export async function renameLog(db, oldHostname, { newValue, type = 'UNSET', pol
     { sql: `DELETE FROM ${LOGS_TABLE} WHERE hostname = ?`, params: [oldHostname] },
     {
       sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      params: [newHostname, validType, newHostname, validPolicy, validParams, validComment, validSource, baseFirst, baseTime, baseCount]
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [newHostname, validType, newHostname, validPolicy, validParams, validComment, validSource, baseIp, baseUsername, baseFirst, baseTime, baseCount]
     }
   ]);
 
@@ -111,7 +113,7 @@ function buildFieldUpdateStatements(target, patched, fields) {
     },
     {
       sql: `INSERT INTO ${LOGS_TABLE} (${WRITE_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(hostname) DO NOTHING`,
       params: [
         target,
@@ -121,6 +123,8 @@ function buildFieldUpdateStatements(target, patched, fields) {
         paramsText || '',
         commentText === null ? '' : commentText,
         sourceText === null ? '' : sourceText,
+        '',
+        '',
         nowIso(),
         nowIso()
       ]
